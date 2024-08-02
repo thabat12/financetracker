@@ -1,7 +1,7 @@
 from flask import Flask
-from routes import subscription_blueprint
-from config import Config
-from models import db
+from backend.api.routes.routes import subscription_blueprint
+from backend.api.config import Config
+from backend.db.models import db
 
 app = Flask(__name__)
 app.config.from_object(Config)

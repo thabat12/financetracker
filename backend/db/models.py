@@ -15,7 +15,6 @@ class Constants:
 
 db: SQLAlchemy = SQLAlchemy()
 
-
 class User(db.Model):
     # identification
     user_id = db.Column(db.String(Constants.IDSizes.SMALL), primary_key=True, nullable=False)
@@ -93,8 +92,6 @@ class Subscription(db.Model):
     merchant_id = db.Column(db.String(Constants.IDSizes.SMALL), \
                             db.ForeignKey('merchants.merchant_id'), nullable=True)
 
-
-
     def to_dict(self):
         return {
             'id': self.id,
@@ -105,6 +102,3 @@ class Subscription(db.Model):
 
     def __repr__(self):
         return f'<Subscription {self.name}>'
-    
-db.drop_all()
-db.create_all()
