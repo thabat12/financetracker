@@ -1,4 +1,5 @@
 python-dotenv
+plaid-python
 requests
 Flask
 Flask-SQLAlchemy
