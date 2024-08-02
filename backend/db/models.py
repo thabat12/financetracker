@@ -1,11 +1,8 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import date
 
-'''
-    Constants:
-        - length of strings defined to avoid hardcoding
+from api.app import app
 
-'''
 class Constants:
     class IDSizes:
         SMALL = 20
@@ -13,9 +10,10 @@ class Constants:
         LARGE = 255
         XLARGE = 1_000
 
-db: SQLAlchemy = SQLAlchemy()
+db: SQLAlchemy = SQLAlchemy(app=app)
 
 class User(db.Model):
+    __tablename__ = 'user'
     # identification
     user_id = db.Column(db.String(Constants.IDSizes.SMALL), primary_key=True, nullable=False)
     created_at = db.Column(db.DateTime, nullable=False)
@@ -31,6 +29,7 @@ class User(db.Model):
     subscriptions = db.relationship('Subscription', backref='user', lazy=True)
     
 class Account(db.Model):
+    __tablename__ = 'account'
     # note: use Plaid's persistent_account_id to populate this
     account_id = db.Column(db.String(Constants.IDSizes.MEDIUM), primary_key=True, nullable=False)
 
@@ -48,16 +47,18 @@ class Account(db.Model):
                         nullable=False)
     
 class Merchant(db.Model):
+    __tablename__ = 'merchant'
     merchant_id = db.Column(db.String(Constants.IDSizes.SMALL), primary_key=True, \
                             nullable=False)
     merchant_name = db.Column(db.String(Constants.IDSizes.MEDIUM), nullable=False)
     merchant_logo = db.Column(db.String(Constants.IDSizes.LARGE), nullable=True)
 
     # one to many
-    transactions = db.relationship('Transaction', backref='merchants', lazy=True)
-    subscriptions = db.relationship('Subscription', backref='merchants', lazy=True)
+    transactions = db.relationship('Transaction', backref='merchant', lazy=True)
+    subscriptions = db.relationship('Subscription', backref='merchant', lazy=True)
 
 class Transaction(db.Model):
+    __tablename__ = 'transaction'
     transaction_id = db.Column(db.String(Constants.IDSizes.MEDIUM), primary_key=True, \
                                nullable=False)
     amount = db.Column(db.Float, nullable=False)
@@ -71,14 +72,15 @@ class Transaction(db.Model):
                         nullable=False)
     
     # one (Account) -> many (Transaction)
-    transation_id = db.Column(db.String(Constants.IDSizes.MEDIUM), \
-                              db.ForeignKey('transaction.transaction_id'), nullable=False)
+    account_id = db.Column(db.String(Constants.IDSizes.MEDIUM), \
+                              db.ForeignKey('account.account_id'), nullable=False)
     
     # one (Merchant) -> many (Transaction)
     merchant_id = db.Column(db.String(Constants.IDSizes.SMALL), \
-                            db.ForeignKey('merchants.merchant_id'), nullable=False)
+                            db.ForeignKey('merchant.merchant_id'), nullable=False)
     
 class Subscription(db.Model):
+    __tablename__ = 'subscription'
     subscription_id = db.Column(db.Integer, primary_key=True, nullable=False)
     name = db.Column(db.String(Constants.IDSizes.MEDIUM), nullable=False)
     price = db.Column(db.Float, nullable=False)
@@ -90,7 +92,7 @@ class Subscription(db.Model):
     
     # one (Merchant) -> many (Subscription)
     merchant_id = db.Column(db.String(Constants.IDSizes.SMALL), \
-                            db.ForeignKey('merchants.merchant_id'), nullable=True)
+                            db.ForeignKey('merchant.merchant_id'), nullable=True)
 
     def to_dict(self):
         return {

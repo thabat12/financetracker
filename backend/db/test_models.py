@@ -7,13 +7,12 @@ from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import create_engine
 
-from db.models import User, Account, Merchant, Transaction, Subscription
+from api.app import app
+from db.models import User, Account, Merchant, Transaction, Subscription, db
 from db.config import Config
 
-app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = Config.TEST_SQLALCHEMY_DATABASE_URI
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
 
 sandbox_url = Config.TEST_PLAID_URL
 client_id = Config.TEST_PLAID_CLIENT_ID
@@ -28,13 +27,11 @@ class TestTableCreationOperations(unittest.TestCase):
         cls.app_context = cls.app.app_context()
         cls.app_context.push()
         cls.client = cls.app.test_client()
+        db.create_all()
 
     @classmethod
     def tearDownClass(cls) -> None:
         cls.app_context.pop()
-
-    def setUp(self):
-        db.create_all()
 
     def test_login_user(self):
         response = requests.post(f'{sandbox_url}/sandbox/public_token/create',
@@ -58,15 +55,26 @@ class TestTableCreationOperations(unittest.TestCase):
         public_access_token = response['access_token']
 
         user = User(user_id="1", created_at=datetime.now(), access_key=public_access_token,
-                    user_first_name="Steve", user_last_name="balls", user_email="steveballs@gmail.com",
-                    user_profile_picture=None)
+                    user_first_name="Steve", user_last_name="balls", 
+                    user_email="steveballs@gmail.com", user_profile_picture=None)
         
-        self.cur_user = user
+        db.session.add(user)
+        db.session.commit()
 
+        user = db.session.get(User, "1")
+        self.assertIsNotNone(user)
 
+    def test_populate_user1(self):
+        # user = self.cur_user
+
+        # response = requests.post(f'{sandbox_url}/accounts/balance/get',
+        #                          headers=standard_header,
+        #                          json={'client_id': client_id, 'secret': secret,
+        #                                'access_token': access})
+        self.assertTrue(True)
 
     def tearDown(self):
-        pass
+        db.drop_all()
 
 if __name__ == '__main__':
     unittest.main()
