@@ -24,9 +24,9 @@ class User(db.Model):
     user_profile_picture = db.Column(db.String(Constants.IDSizes.XLARGE), nullable=True)
 
     # one to many
-    accounts = db.relationship('Account', backref='user', lazy=True)
-    transactions = db.relationship('Transaction', backref='user', lazy=True)
-    subscriptions = db.relationship('Subscription', backref='user', lazy=True)
+    accounts = db.relationship('Account', back_populates='user', cascade='all, delete-orphan')
+    transactions = db.relationship('Transaction', backref='user', lazy=True, cascade='all, delete-orphan')
+    subscriptions = db.relationship('Subscription', backref='user', lazy=True, cascade='all, delete-orphan')
     
 class Account(db.Model):
     __tablename__ = 'account'
@@ -40,11 +40,14 @@ class Account(db.Model):
     account_type = db.Column(db.String(Constants.IDSizes.SMALL), nullable=True)
 
     # one to many
-    transactions = db.relationship('Transaction', backref='account', lazy=True)
+    transactions = db.relationship('Transaction', backref='account', lazy=True, cascade='all, delete-orphan')
 
     # one (User) -> many (Account)
-    user_id = db.Column(db.String(Constants.IDSizes.SMALL), db.ForeignKey('user.user_id'), \
-                        nullable=False)
+    user_id = db.Column(db.String(Constants.IDSizes.SMALL), db.ForeignKey('user.user_id'))
+    user = db.relationship('User', back_populates='accounts')
+    
+    def __repr__(self) -> str:
+        return f'{self.account_id}: {self.account_name}'
     
 class Merchant(db.Model):
     __tablename__ = 'merchant'
@@ -63,9 +66,7 @@ class Transaction(db.Model):
                                nullable=False)
     amount = db.Column(db.Float, nullable=False)
     authorized_date = db.Column(db.DateTime, nullable=False)
-    merchant_name = db.Column(db.String(Constants.IDSizes.MEDIUM), nullable=False)
-    merchant_logo = db.Column(db.String(Constants.IDSizes.LARGE), nullable=True)
-    personal_finance_category = db.Column(db.String(Constants.IDSizes.MEDIUM), nullable=False)
+    personal_finance_category = db.Column(db.String(Constants.IDSizes.MEDIUM), nullable=True)
 
     # one (User) -> many (Transaction)
     user_id = db.Column(db.String(Constants.IDSizes.SMALL), db.ForeignKey('user.user_id'), \
