@@ -3,16 +3,13 @@ import requests
 import unittest
 from datetime import datetime
 
-from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
-from api.app import app
-from db.models import User, Account, Merchant, Transaction, Subscription, db
+from db.models import User, Account, Merchant, Transaction, Subscription, Base
 from db.config import Config
 
-app.config['SQLALCHEMY_DATABASE_URI'] = Config.TEST_SQLALCHEMY_DATABASE_URI
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+test_engine = create_engine(Config.TEST_SQLALCHEMY_DATABASE_URI)
 # app.config['TESTING'] = True
 
 sandbox_url = Config.TEST_PLAID_URL
@@ -24,13 +21,7 @@ standard_header = {'Content-Type': 'application/json'}
 class TestTableCreationOperations(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        app_context = app.app_context()
-        cls.app_context = app_context
-        cls.app_context.push()
-
-        db.drop_all()
-        db.create_all()
-
+        cls.Session = sessionmaker(bind=test_engine)
         cls.test_file = open('./db/test_files/test_models.txt', 'r')
 
         cls.TYPE_MAPPINGS = {
@@ -38,11 +29,19 @@ class TestTableCreationOperations(unittest.TestCase):
             'VARCHAR': str,
             'FLOAT': float
         }
+        Base.metadata.drop_all(test_engine)
+        Base.metadata.create_all(test_engine)
 
     @classmethod
     def tearDownClass(cls) -> None:
-        # db.drop_all()
-        cls.app_context.pop()
+        Base.metadata.drop_all(test_engine)
+        cls.test_file.close()
+
+    def setUp(self):
+        self.session = self.Session()
+
+    def tearDown(self):
+        self.session.close()
 
     def get_next_line(self):
         cur_line = ''
@@ -81,21 +80,21 @@ class TestTableCreationOperations(unittest.TestCase):
         action, tablename, N = self.get_next_line().split(' ')
         N = int(N)
         self.assertEqual(action, 'INSERT')
-        self.assertEqual(tablename, 'users')
+        self.assertEqual(tablename, 'user')
         users = self.get_insert_data(User, N)
         self.assertEqual(N, len(users))
-        db.session.add_all(users)
-        db.session.commit()
+        self.session.add_all(users)
+        self.session.commit()
 
     def test2_insert_accounts(self):
         action, tablename, N = self.get_next_line().split(' ')
         N = int(N)
         self.assertEqual(action, 'INSERT')
-        self.assertEqual(tablename, 'accounts')
+        self.assertEqual(tablename, 'account')
         accounts = self.get_insert_data(Account, N)
         self.assertEqual(N, len(accounts))
-        db.session.add_all(accounts)
-        db.session.commit()
+        self.session.add_all(accounts)
+        self.session.commit()
 
     def test3_insert_merchants(self):
         action, tablename, N = self.get_next_line().split(' ')
@@ -104,8 +103,8 @@ class TestTableCreationOperations(unittest.TestCase):
         self.assertEqual(tablename, 'merchant')
         merchants = self.get_insert_data(Merchant, N)
         self.assertEqual(N, len(merchants))
-        db.session.add_all(merchants)
-        db.session.commit()
+        self.session.add_all(merchants)
+        self.session.commit()
 
     def test4_insert_transactions(self):
         action, tablename, N = self.get_next_line().split(' ')
@@ -114,18 +113,15 @@ class TestTableCreationOperations(unittest.TestCase):
         self.assertEqual(tablename, 'transaction')
         transactions = self.get_insert_data(Transaction, N)
         self.assertEqual(N, len(transactions))
-        db.session.add_all(transactions)
-        db.session.commit()
+        self.session.add_all(transactions)
+        self.session.commit()
 
-    def test5_test_delete_accounts(self):
+    def test5_open_transactions(self):
         # testing for cascade = all, delete-orphan settings
-        cur_user = db.session.get(User, '2')
-        print(cur_user.accounts)
-
-        # print(accounts)
-
-    def tearDown(self):
-        pass
+        new_usr = User(user_id='15', created_at=datetime(2010, 1, 1), access_key='1',
+                       user_first_name='abhinav', user_last_name='bichal', user_email='hi',
+                       user_profile_picture='picture.jpg')
+        self.session.add(new_usr)
 
 if __name__ == '__main__':
     unittest.main()

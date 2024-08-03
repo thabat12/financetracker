@@ -1,5 +1,5 @@
 # test case 1
-INSERT users 9
+INSERT user 9
 1 2023-01-01:00:00:00 key1 John Doe john.doe@example.com profile1.jpg
 2 2023-02-01:00:00:00 key2 Jane Smith jane.smith@example.com profile2.jpg
 3 2023-03-01:00:00:00 key3 Mike Johnson mike.johnson@example.com profile3.jpg
@@ -11,17 +11,17 @@ INSERT users 9
 9 2023-09-01:00:00:00 key9 Robert Taylor robert.taylor@example.com profile9.jpg
 
 # test case 2
-INSERT accounts 10
-1 1235.67 1200.0 USD Chase Checkings Account checking 1
-2 5525.837 5500.0 USD Plaid Checkings Account checking 2
-3 2350.75 2300.0 USD Bank of America Savings savings 3
-4 4125.5 4100.0 USD Wells Fargo Checkings checking 4
-5 10000.0 10000.0 USD Fidelity Investments investment 4
-6 6300.45 6250.0 USD Chase Savings Account savings 5
-7 1100.23 1100.0 USD US Bank Checkings checking 6
-8 7200.89 7150.0 USD Charles Schwab Brokerage brokerage 7
-9 3250.99 3200.0 USD Ally Bank Savings savings 9
-10 6650.96 3200.0 USD Ally Bank Savings savings 9
+INSERT account 10
+1 1235.67 1200.0 USD Chase_Checkings_Account checking 1
+2 5525.837 5500.0 USD Plaid_Checkings_Account checking 2
+3 2350.75 2300.0 USD Bank_of_America_Savings savings 3
+4 4125.5 4100.0 USD Wells_Fargo_Checkings checking 4
+5 10000.0 10000.0 USD Fidelity_Investments investment 4
+6 6300.45 6250.0 USD Chase_Savings_Account savings 5
+7 1100.23 1100.0 USD US_Bank_Checkings checking 6
+8 7200.89 7150.0 USD Charles_Schwab_Brokerage brokerage 7
+9 3250.99 3200.0 USD Ally_Bank_Savings savings 9
+10 6650.96 3200.0 USD Ally_Bank_Savings savings 9
 
 # test case 3
 INSERT merchant 5
@@ -50,4 +50,3 @@ INSERT transaction 17
 15 25.0 2024-02-15:00:00:00 cate 6 7 4
 16 300.0 2024-02-16:00:00:00 catf 7 8 1
 17 20.0 2024-02-17:00:00:00 catg 9 9 3
-

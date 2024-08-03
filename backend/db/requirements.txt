@@ -1,5 +1,5 @@
 python-dotenv
-plaid-python
+psycopg2
 requests
 Flask
 Flask-SQLAlchemy
