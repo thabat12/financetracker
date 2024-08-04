@@ -3,7 +3,7 @@ import requests
 import unittest
 from datetime import datetime
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from db.models import User, Account, Merchant, Transaction, Subscription, Base
@@ -34,7 +34,7 @@ class TestTableCreationOperations(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls) -> None:
-        Base.metadata.drop_all(test_engine)
+        # Base.metadata.drop_all(test_engine)
         cls.test_file.close()
 
     def setUp(self):
@@ -116,12 +116,158 @@ class TestTableCreationOperations(unittest.TestCase):
         self.session.add_all(transactions)
         self.session.commit()
 
-    def test5_open_transactions(self):
-        # testing for cascade = all, delete-orphan settings
-        new_usr = User(user_id='15', created_at=datetime(2010, 1, 1), access_key='1',
-                       user_first_name='abhinav', user_last_name='bichal', user_email='hi',
-                       user_profile_picture='picture.jpg')
-        self.session.add(new_usr)
+    # testing the cascading orphan delete setting
+    def test5_orphan_delete(self):
+        cur_user = self.session.get(User, '4')
+        self.assertEqual(len(cur_user.accounts), 2)
+
+        all_transactions = []
+        for acc in cur_user.accounts:
+            for transaction in acc.transactions:
+                all_transactions.append(transaction)
+
+        self.assertEqual(len(all_transactions), 3)
+        self.session.delete(cur_user)
+        self.session.commit()
+
+        self.assertIsNone(self.session.get(User, '4'))
+        smt = select(Transaction).where(Transaction.user_id == '4')
+        t = self.session.scalars(smt).all()
+        self.assertEqual(len(t), 0)
+        smt = select(Account).where(Account.user_id == '4')
+        a = self.session.scalars(smt).all()
+        self.assertEqual(len(a), 0)
+
+    # testing ORM object addition
+    def test7_user_creation(self):
+        user = User(
+            user_id='user1',
+            created_at=datetime.now(),
+            user_first_name='John',
+            user_last_name='Doe',
+            user_email='john.doe@example.com'
+        )
+        self.session.add(user)
+        self.session.commit()
+        
+        retrieved_user = self.session.get(User, 'user1')
+        self.assertIsNotNone(retrieved_user)
+        self.assertEqual(retrieved_user.user_first_name, 'John')
+
+    # testing ORM object additions
+    def test8_account_creation(self):
+        account = Account(account_id='account1')
+        cur_user = self.session.get(User, 'user1')
+        cur_user.accounts.append(account)
+        self.session.commit()
+
+        smt = select(Account).where(Account.account_id == 'account1')
+        a = self.session.scalars(smt).all()
+        self.assertEqual(len(a), 1)
+
+    # testing how to use backref
+    def test9_transaction_creation(self):
+        cur_user: User = self.session.get(User, 'user1')
+        cur_account: Account = cur_user.accounts[0]
+        cur_merchant: Merchant = self.session.scalar(select(Merchant).where(Merchant.merchant_id == '1'))
+        transaction = Transaction(transaction_id='transaction1', authorized_date=datetime.now(), \
+                                  amount=10, user=cur_user, account=cur_account, merchant=cur_merchant)
+        self.session.add(transaction)
+        self.session.commit()
+
+        transaction: Transaction = self.session.get(Transaction, 'transaction1')
+        self.assertListEqual(['user1', cur_account.account_id, cur_merchant.merchant_id],
+                             [transaction.user_id, transaction.account_id, transaction.merchant_id])
+
+    # testing the cascading delete on Account when User is deleted
+    def test10_account_cascade_on_user_delete(self):
+        user = User(user_id='user2', created_at=datetime.now(), user_first_name='Alice', user_last_name='Smith', user_email='alice.smith@example.com')
+        account1 = Account(account_id='account2', user=user)
+        account2 = Account(account_id='account3', user=user)
+        self.session.add(user)
+        self.session.add(account1)
+        self.session.add(account2)
+        self.session.commit()
+
+        self.session.delete(user)
+        self.session.commit()
+
+        self.assertIsNone(self.session.get(User, 'user2'))
+        self.assertIsNone(self.session.get(Account, 'account2'))
+        self.assertIsNone(self.session.get(Account, 'account3'))
+
+    # testing the addition of Transactions with existing Merchants and Accounts
+    def test11_transaction_with_existing_references(self):
+        user = User(user_id='user3', created_at=datetime.now(), user_first_name='Bob', user_last_name='Brown', user_email='bob.brown@example.com')
+        account = Account(account_id='account4', user=user)
+        merchant = Merchant(merchant_id='merchant1', merchant_name='SuperMart')
+        self.session.add(user)
+        self.session.add(account)
+        self.session.add(merchant)
+        self.session.commit()
+
+        transaction = Transaction(
+            transaction_id='transaction2',
+            amount=25.0,
+            authorized_date=datetime.now(),
+            personal_finance_category='Electronics',
+            user=user,
+            account=account,
+            merchant=merchant
+        )
+        self.session.add(transaction)
+        self.session.commit()
+
+        retrieved_transaction = self.session.get(Transaction, 'transaction2')
+        self.assertEqual(retrieved_transaction.amount, 25.0)
+        self.assertEqual(retrieved_transaction.user, user)
+        self.assertEqual(retrieved_transaction.account, account)
+        self.assertEqual(retrieved_transaction.merchant, merchant)
+
+    # testing the creation and retrieval of Subscriptions
+    def test12_subscription_creation_and_retrieval(self):
+        user = User(user_id='user4', created_at=datetime.now(), user_first_name='Carol', user_last_name='White', user_email='carol.white@example.com')
+        merchant = Merchant(merchant_id='merchant2', merchant_name='TechStore')
+        self.session.add(user)
+        self.session.add(merchant)
+        self.session.commit()
+
+        subscription = Subscription(
+            subscription_id=1,
+            name='Premium Service',
+            price=99.99,
+            renewal_date=datetime.now(),
+            user=user,
+            merchant=merchant
+        )
+        self.session.add(subscription)
+        self.session.commit()
+
+        retrieved_subscription = self.session.get(Subscription, 1)
+        self.assertEqual(retrieved_subscription.name, 'Premium Service')
+        self.assertEqual(retrieved_subscription.user, user)
+        self.assertEqual(retrieved_subscription.merchant, merchant)
+
+    # testing multiple transactions related to a single account
+    def test13_multiple_transactions_for_account(self):
+        user = User(user_id='user5', created_at=datetime.now(), user_first_name='Eve', user_last_name='Johnson', user_email='eve.johnson@example.com')
+        account = Account(account_id='account5', user=user)
+        self.session.add(user)
+        self.session.add(account)
+        self.session.commit()
+
+        transaction1 = Transaction(transaction_id='transaction3', amount=45.0, authorized_date=datetime.now(), \
+                                    personal_finance_category='Dining', account=account, user=user, merchant_id='merchant1')
+        transaction2 = Transaction(transaction_id='transaction4', amount=60.0, authorized_date=datetime.now(), \
+                                    personal_finance_category='Books', account=account, user=user, merchant_id='merchant1')
+        self.session.add(transaction1)
+        self.session.add(transaction2)
+        self.session.commit()
+
+        transactions = self.session.query(Transaction).filter_by(account_id='account5').all()
+        self.assertEqual(len(transactions), 2)
+        self.assertIn(transaction1, transactions)
+        self.assertIn(transaction2, transactions)
 
 if __name__ == '__main__':
     unittest.main()

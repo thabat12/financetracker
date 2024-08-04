@@ -32,7 +32,7 @@ INSERT merchant 5
 5 Costco costco_logo.jpg
 
 # test case 4
-INSERT transaction 17
+INSERT transaction 20
 1 3.2 2024-02-01:00:00:00 cata 1 1 2
 2 55.3 2024-02-02:00:00:00 cata 2 2 3
 3 120.0 2024-02-03:00:00:00 catb 3 3 1
@@ -50,3 +50,6 @@ INSERT transaction 17
 15 25.0 2024-02-15:00:00:00 cate 6 7 4
 16 300.0 2024-02-16:00:00:00 catf 7 8 1
 17 20.0 2024-02-17:00:00:00 catg 9 9 3
+18 20.0 2024-02-17:00:00:00 catg 9 9 2
+19 20.0 2024-02-17:00:00:00 catg 9 9 1
+20 20.0 2024-02-17:00:00:00 catg 9 9 4

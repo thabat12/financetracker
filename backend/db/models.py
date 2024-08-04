@@ -26,9 +26,9 @@ class User(Base):
     user_profile_picture = Column(String(Constants.IDSizes.XLARGE), nullable=True)
 
     # one to many
-    accounts = relationship('Account', back_populates='user', cascade='all, delete-orphan')
-    transactions = relationship('Transaction', backref='user', lazy=True, cascade='all, delete-orphan')
-    subscriptions = relationship('Subscription', backref='user', lazy=True, cascade='all, delete-orphan')
+    accounts = relationship('Account', back_populates='user', lazy='select', cascade='all, delete-orphan')
+    transactions = relationship('Transaction', backref='user', lazy='select', cascade='all, delete-orphan')
+    subscriptions = relationship('Subscription', backref='user', lazy='select', cascade='all, delete-orphan')
     
 class Account(Base):
     __tablename__ = 'account'
@@ -42,7 +42,7 @@ class Account(Base):
     account_type = Column(String(Constants.IDSizes.SMALL), nullable=True)
 
     # one to many
-    transactions = relationship('Transaction', backref='account', lazy=True, cascade='all, delete-orphan')
+    transactions = relationship('Transaction', backref='account', lazy='select', cascade='all, delete-orphan')
 
     # one (User) -> many (Account)
     user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey('user.user_id'))
@@ -59,8 +59,8 @@ class Merchant(Base):
     merchant_logo = Column(String(Constants.IDSizes.LARGE), nullable=True)
 
     # one to many
-    transactions = relationship('Transaction', backref='merchant', lazy=True)
-    subscriptions = relationship('Subscription', backref='merchant', lazy=True)
+    transactions = relationship('Transaction', backref='merchant', lazy='select')
+    subscriptions = relationship('Subscription', backref='merchant', lazy='select')
 
 class Transaction(Base):
     __tablename__ = 'transaction'
@@ -73,7 +73,7 @@ class Transaction(Base):
     # one (User) -> many (Transaction)
     user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey('user.user_id'), \
                         nullable=False)
-    
+
     # one (Account) -> many (Transaction)
     account_id = Column(String(Constants.IDSizes.MEDIUM), \
                               ForeignKey('account.account_id'), nullable=False)
