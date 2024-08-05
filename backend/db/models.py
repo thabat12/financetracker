@@ -1,9 +1,10 @@
-from flask_sqlalchemy import SQLAlchemy
-from datetime import date
-
 from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+
+from pydantic import BaseModel, Field
+from typing import Annotated, Optional, List
+from datetime import datetime
 
 class Constants:
     class IDSizes:
@@ -15,10 +16,11 @@ class Constants:
 Base = declarative_base()
 
 class User(Base):
-    __tablename__ = 'user'
+    __tablename__ = 'financetracker_user'
     # identification
     user_id = Column(String(Constants.IDSizes.SMALL), primary_key=True, nullable=False)
     created_at = Column(DateTime, nullable=False)
+    last_login_at = Column(DateTime, nullable=False)
     access_key = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
     user_first_name = Column(String(Constants.IDSizes.SMALL), nullable=False)
     user_last_name = Column(String(Constants.IDSizes.SMALL), nullable=False)
@@ -26,7 +28,7 @@ class User(Base):
     user_profile_picture = Column(String(Constants.IDSizes.XLARGE), nullable=True)
 
     # one to many
-    accounts = relationship('Account', back_populates='user', lazy='select', cascade='all, delete-orphan')
+    accounts = relationship('Account', backref='user', lazy='select', cascade='all, delete-orphan')
     transactions = relationship('Transaction', backref='user', lazy='select', cascade='all, delete-orphan')
     subscriptions = relationship('Subscription', backref='user', lazy='select', cascade='all, delete-orphan')
     
@@ -45,8 +47,7 @@ class Account(Base):
     transactions = relationship('Transaction', backref='account', lazy='select', cascade='all, delete-orphan')
 
     # one (User) -> many (Account)
-    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey('user.user_id'))
-    user = relationship('User', back_populates='accounts')
+    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'))
     
     def __repr__(self) -> str:
         return f'{self.account_id}: {self.account_name}'
@@ -71,16 +72,16 @@ class Transaction(Base):
     personal_finance_category = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
 
     # one (User) -> many (Transaction)
-    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey('user.user_id'), \
+    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), \
                         nullable=False)
 
     # one (Account) -> many (Transaction)
     account_id = Column(String(Constants.IDSizes.MEDIUM), \
-                              ForeignKey('account.account_id'), nullable=False)
+                              ForeignKey(f'{Account.__tablename__}.account_id'), nullable=False)
     
     # one (Merchant) -> many (Transaction)
     merchant_id = Column(String(Constants.IDSizes.SMALL), \
-                            ForeignKey('merchant.merchant_id'), nullable=False)
+                            ForeignKey(f'{Merchant.__tablename__}.merchant_id'), nullable=False)
     
 class Subscription(Base):
     __tablename__ = 'subscription'
@@ -90,12 +91,12 @@ class Subscription(Base):
     renewal_date = Column(DateTime, nullable=False)
 
     # one (User) -> many (Subscription)
-    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey('user.user_id'), \
+    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), \
                         nullable=False)
     
     # one (Merchant) -> many (Subscription)
     merchant_id = Column(String(Constants.IDSizes.SMALL), \
-                            ForeignKey('merchant.merchant_id'), nullable=True)
+                            ForeignKey(f'{Merchant.__tablename__}.merchant_id'), nullable=True)
 
     def to_dict(self):
         return {
@@ -107,3 +108,22 @@ class Subscription(Base):
 
     def __repr__(self):
         return f'<Subscription {self.name}>'
+    
+class PORM(BaseModel):
+    class Config:
+        from_attributes = True
+
+class PUser(PORM):
+    user_id: str
+
+class PAccount(PORM):
+    account_id: str
+
+class PMerchant(PORM):
+    merchant_id: str
+
+class PTransaction(PORM):
+    transaction_id: str
+
+class PSubscription(PORM):
+    subscription_id: int
