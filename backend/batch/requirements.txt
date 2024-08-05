@@ -1,0 +1,4 @@
+quart
+sqlalchemy
+uvicorn
+fastapi[standard]
