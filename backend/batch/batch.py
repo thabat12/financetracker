@@ -172,13 +172,13 @@ async def create_account(request: CreateAccountRequest, dbsess: AsyncSession = D
         }
     }
 
-class LinkAccountRequest(BaseModel):
+
+class GetPublicTokenRequest(BaseModel):
     uuid: str
 
-async def plaid_link_account(uuid: str):
+async def plaid_get_public_token(uuid: str):
     async for dbsess in yield_db():
         async with dbsess.begin():
-            cur_user = await dbsess.get(User, uuid)
             public_token = None
             try:
                 async with httpx.AsyncClient() as client:
@@ -195,18 +195,57 @@ async def plaid_link_account(uuid: str):
                                             })
                     resp = resp.json()
                     public_token = resp['public_token']
-                    print('the public token is', public_token)
             except Exception as e:
                 print(e)
                 raise HTTPException(status_code=500, detail='Plaid Endpoint Request Failed') from e
             
+            return public_token
+    return None
+
+@app.post('/get_public_token')
+async def get_public_token(request):
+    print(request.json())
+    # public_token = await get_public_token(request.uuid)
+    # return {
+    #     'public_token': public_token
+    # }
+
+class LinkAccountRequest(BaseModel):
+    uuid: str
+    public_token: str
+
+async def plaid_link_account(uuid, public_token):
+    for dbsess in yield_db():
+        with dbsess.begin():
+            access_token = None
+            cur_user = dbsess.get(User, uuid)
+            if not cur_user:
+                raise HTTPException(status_code=500, detail='User with UUID Does Not Exist!')
+            
             try:
-                cur_user.access_key = public_token
+                async with httpx.AsyncClient() as client:
+                    resp = await client.post(
+                        f'{settings.test_plaid_url}/item/public_token/exchange',
+                        headers={'Content-Type': 'application/json'},
+                        json={
+                            'client_id': settings.test_plaid_client_id,
+                            'secret': settings.plaid_secret,
+                            'public_token': public_token
+                        }
+                    )
+                    resp = resp.json()
+                    access_token = resp['access_token']
+            except Exception as e:
+                print(e)
+                raise HTTPException(status_code=500, detail='Plaid Endpoint Failed!') from e
+            
+            try:
+                cur_user.access_key = access_token
                 await dbsess.commit()
             except Exception as e:
                 print(e)
-                raise HTTPException(status_code=500, detail='Database Update Failed') from e
-                
+                raise HTTPException(status_code=500, detail='Database Commit Failed!')
+
 @app.post('/link_account')
 async def link_account(request: LinkAccountRequest):
     await plaid_link_account(request.uuid)
