@@ -203,12 +203,11 @@ async def plaid_get_public_token(uuid: str):
     return None
 
 @app.post('/get_public_token')
-async def get_public_token(request):
-    print(request.json())
-    # public_token = await get_public_token(request.uuid)
-    # return {
-    #     'public_token': public_token
-    # }
+async def get_public_token(request: GetPublicTokenRequest):
+    public_token = await get_public_token(request.uuid)
+    return {
+        'public_token': public_token
+    }
 
 class LinkAccountRequest(BaseModel):
     uuid: str
