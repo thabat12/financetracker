@@ -26,6 +26,7 @@ class User(Base):
     user_last_name = Column(String(Constants.IDSizes.SMALL), nullable=False)
     user_email = Column(String(Constants.IDSizes.MEDIUM), nullable=False)
     user_profile_picture = Column(String(Constants.IDSizes.XLARGE), nullable=True)
+    transactions_sync_cursor = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
 
     # one to many
     accounts = relationship('Account', backref='user', lazy='select', cascade='all, delete-orphan')
@@ -47,14 +48,14 @@ class Account(Base):
     transactions = relationship('Transaction', backref='account', lazy='select', cascade='all, delete-orphan')
 
     # one (User) -> many (Account)
-    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'))
+    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), nullable=False)
     
     def __repr__(self) -> str:
         return f'{self.account_id}: {self.account_name}'
     
 class Merchant(Base):
     __tablename__ = 'merchant'
-    merchant_id = Column(String(Constants.IDSizes.SMALL), primary_key=True, \
+    merchant_id = Column(String(Constants.IDSizes.MEDIUM), primary_key=True, \
                             nullable=False)
     merchant_name = Column(String(Constants.IDSizes.MEDIUM), nullable=False)
     merchant_logo = Column(String(Constants.IDSizes.LARGE), nullable=True)
@@ -68,7 +69,7 @@ class Transaction(Base):
     transaction_id = Column(String(Constants.IDSizes.MEDIUM), primary_key=True, \
                                nullable=False)
     amount = Column(Float, nullable=False)
-    authorized_date = Column(DateTime, nullable=False)
+    authorized_date = Column(DateTime, nullable=True)
     personal_finance_category = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
 
     # one (User) -> many (Transaction)
@@ -80,7 +81,7 @@ class Transaction(Base):
                               ForeignKey(f'{Account.__tablename__}.account_id'), nullable=False)
     
     # one (Merchant) -> many (Transaction)
-    merchant_id = Column(String(Constants.IDSizes.SMALL), \
+    merchant_id = Column(String(Constants.IDSizes.MEDIUM), \
                             ForeignKey(f'{Merchant.__tablename__}.merchant_id'), nullable=False)
     
 class Subscription(Base):
