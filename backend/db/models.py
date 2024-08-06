@@ -26,7 +26,7 @@ class User(Base):
     user_last_name = Column(String(Constants.IDSizes.SMALL), nullable=False)
     user_email = Column(String(Constants.IDSizes.MEDIUM), nullable=False)
     user_profile_picture = Column(String(Constants.IDSizes.XLARGE), nullable=True)
-    transactions_sync_cursor = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+    transactions_sync_cursor = Column(String(Constants.IDSizes.LARGE), nullable=True)
 
     # one to many
     accounts = relationship('Account', backref='user', lazy='select', cascade='all, delete-orphan')

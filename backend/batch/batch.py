@@ -1,6 +1,4 @@
 import httpx
-import signal
-import asyncio
 import secrets
 import string
 from datetime import datetime
@@ -252,9 +250,9 @@ async def refresh_transaction_data(dbsess: AsyncSession = Depends(yield_db)):
 
         if not access_key:
             continue
-
-        smt = select(User.transactions_sync_cursor).where(User.user_id == user_id)
-        cur_transaction_cursor = await dbsess.scalar(smt)
+        
+        cur_user = await dbsess.get(User, user_id)
+        cur_transaction_cursor = cur_user.transactions_sync_cursor
         merchants_indb = await dbsess.scalars(select(Merchant.merchant_id))
         merchants_indb = set(merchants_indb.all())
         
@@ -291,12 +289,11 @@ async def refresh_transaction_data(dbsess: AsyncSession = Depends(yield_db)):
                 has_more = resp['has_more']
                 cur_transaction_cursor = resp['next_cursor']
                 limit -= 1
-                print('has more value: ', has_more)
+            
+            cur_user.transactions_sync_cursor = cur_transaction_cursor
 
             for added_transaction in added:
                 added_transaction: PlaidTransaction
-
-                print(added_transaction.merchant_entity_id)
 
                 if not added_transaction.merchant_entity_id and ('not-available' not in merchants_indb):
                     dbsess.add(Merchant(merchant_id = 'not-available', merchant_name = "None", merchant_logo = "None"))
@@ -368,9 +365,6 @@ async def refresh_transaction_data(dbsess: AsyncSession = Depends(yield_db)):
     }
 
 
-
-    
-
 '''
     CLIENT SIDE API
         create_account
@@ -390,7 +384,6 @@ class CreateAccountRequest(BaseModel):
 async def create_account(request: CreateAccountRequest, dbsess: AsyncSession = Depends(yield_db)):
 
     uuid = generate_random_id()
-    print('generated a random uuid', uuid)
 
     while (await dbsess.get(User, uuid)):
         uuid = generate_random_id()
@@ -500,7 +493,6 @@ async def plaid_exchange_public_token(user_id, public_token):
 
 @app.post('/exchange_public_token')
 async def exchange_public_token(request: ExchangePublicTokenRequest):
-    print(request.user_id, request.public_token)
     await plaid_exchange_public_token(request.user_id, request.public_token)
     return {'message': 'success'}
 
