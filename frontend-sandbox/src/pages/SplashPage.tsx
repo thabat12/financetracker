@@ -5,11 +5,9 @@ import axios, { AxiosResponse } from "axios";
 // using someone else's component for react one tap login
 import { useGoogleOneTapLogin } from "react-google-one-tap-login";
 import { jwtDecode } from "jwt-decode";
-import { OAuth2Client } from "@react-oauth/google";
 
 
 const clientId = "797734322196-9i7q2teoas355etda5poi48mll0b3r2l.apps.googleusercontent.com";
-const client = new OAuth2Client();
 
 function SplashPage() {
     type UserProfile = {
@@ -43,12 +41,6 @@ function SplashPage() {
     }
 
     async function retrieveJWT(data: any) {
-        const ticket = await client.verifyIdToken({
-            idToken: data.credential,
-            audience: clientId,
-        });
-        const payload = ticket.getPayload();
-        console.log(payload);
     }
 
     async function verifyToken(idToken: any) {
