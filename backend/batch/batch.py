@@ -5,6 +5,7 @@ from datetime import datetime
 from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, update, delete, create_engine
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -14,6 +15,7 @@ from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
 from db.models import *
+from batch.routes.auth import auth_router
 
 Session: AsyncSession | None = None
 class Settings(BaseSettings):
@@ -22,6 +24,7 @@ class Settings(BaseSettings):
         test_plaid_url: str
         test_plaid_client_id: str
         plaid_secret: str
+        auth_secret_key: str
 settings: Settings | None = None
 
 @asynccontextmanager
@@ -32,11 +35,22 @@ async def lifespan(app: FastAPI):
     settings = Settings()
     async_database_engine = create_async_engine(settings.async_sqlalchemy_database_uri)
     Session = sessionmaker(bind=async_database_engine, class_=AsyncSession, expire_on_commit=False)
+    
+    app.include_router(auth_router, prefix='/auth')
     yield
     await async_database_engine.dispose()
     
 
 app = FastAPI(lifespan=lifespan)
+
+allowed_origins = [ "http://localhost", "http://localhost:3000"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=['*'],
+    allow_headers=['*']
+)
 
 async def yield_db():
     async with Session() as session:
@@ -367,54 +381,10 @@ async def refresh_transaction_data(dbsess: AsyncSession = Depends(yield_db)):
 
 '''
     CLIENT SIDE API
-        create_account
         link_account
         get_transactions
 
 '''
-class CreateAccountRequest(BaseModel):
-    username: str
-    password: str
-    first_name: str
-    last_name: str
-    user_email: str
-    user_profile_picture: Optional[str]
-
-@app.post('/create_account')
-async def create_account(request: CreateAccountRequest, dbsess: AsyncSession = Depends(yield_db)):
-
-    uuid = generate_random_id()
-
-    while (await dbsess.get(User, uuid)):
-        uuid = generate_random_id()
-
-    new_user = User(
-        user_id=uuid,
-        created_at=datetime.now(),
-        last_login_at=datetime.now(),
-        access_key=None,
-        user_first_name=request.first_name,
-        user_last_name=request.last_name,
-        user_email=request.user_email,
-        user_profile_picture=request.user_profile_picture
-    )
-
-    dbsess.add(new_user)
-
-    try:
-        await dbsess.commit()
-    except Exception as e:
-        await dbsess.rollback()
-        print(e)
-        raise HTTPException(status_code=500, detail="Failed to create account") from e
-    
-    return {
-        'message': 'success',
-        'data': {
-            'uuid': uuid
-        }
-    }
-
 
 class GetPublicTokenRequest(BaseModel):
     user_id: str

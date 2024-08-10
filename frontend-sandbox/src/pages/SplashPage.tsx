@@ -10,19 +10,20 @@ import { jwtDecode } from "jwt-decode";
 const clientId = "797734322196-9i7q2teoas355etda5poi48mll0b3r2l.apps.googleusercontent.com";
 
 function SplashPage() {
-    type UserProfile = {
+
+    type UserProfileType = {
         access_token? : string;
     }
 
-    type GoogleUserProfile = {
-        credential? : string;
+    type UserDetailsType = {
+        id? : string;
     }
 
-    const [userProfile, setUserProfile] = useState<UserProfile>({});
-    const [userDetails, setUserDetails] = useState({});
+    const [userProfile, setUserProfile] = useState<UserProfileType>({});
+    const [userDetails, setUserDetails] = useState<UserDetailsType>({});
 
-    const setUser = (codeResponse: UserProfile) => {
-        console.log(codeResponse);
+    const setUser = (codeResponse: UserProfileType) => {
+        console.log(`with useGoogleLogin: ${JSON.stringify(codeResponse, null, 2)}`);
         setUserProfile(codeResponse);
     }
 
@@ -31,7 +32,7 @@ function SplashPage() {
     }
 
     const login = useGoogleLogin({
-        onSuccess: (codeResponse: UserProfile) => setUser(codeResponse),
+        onSuccess: (codeResponse: UserProfileType) => setUser(codeResponse),
         onError: (error: Pick<CodeResponse, "error" | "error_description" | "error_uri">) => handleError(error)
     });
 
@@ -40,33 +41,9 @@ function SplashPage() {
         setUserProfile({});
     }
 
-    async function retrieveJWT(data: any) {
-    }
-
-    async function verifyToken(idToken: any) {
-    }
-
-    const loginGoogle = (response: GoogleUserProfile) => {
-        const token = response.credential;
-    }
-
 
     useEffect( () => {
 
-            const script = document.createElement("script");
-            script.src = "https://accounts.google.com/gsi/client";
-            script.async = true;
-            script.onload = () => {
-                window.google.accounts.id.initialize({
-                    client_id: clientId,
-                    callback: (msg: any) => retrieveJWT(msg)
-                })
-                window.google.accounts.id.prompt();
-            }
-            document.head.appendChild(script);
-
-
-            console.log(JSON.stringify(userProfile, null, 2));
             if (userProfile.access_token) {
                 axios.get(`https://www.googleapis.com/oauth2/v1/userinfo?access_token=${userProfile.access_token}`,
                     {
@@ -79,6 +56,7 @@ function SplashPage() {
                 .then(
                     (res: AxiosResponse) => {
                         setUserDetails(res.data);
+
                     }
                 ).catch(
                     (err) => {
@@ -86,14 +64,39 @@ function SplashPage() {
                     }
                 )
             } else {
+                const script = document.createElement("script");
+                script.src = "https://accounts.google.com/gsi/client";
+                script.async = true;
+                script.onload = () => {
+                    window.google.accounts.id.initialize({
+                        client_id: clientId,
+                        callback: (msg: any) => console.log(`with the onetaplogin ${JSON.stringify(msg, null, 2)}`)
+                    })
+                    window.google.accounts.id.prompt();
+                }
+                document.head.appendChild(script);
                 setUserDetails({});
             }
 
             return () => {
-                document.head.removeChild(script);
             }
         }, [userProfile]
-    )
+    );
+
+    useEffect(() => {
+        if (userDetails.id) {
+            console.log("here is where I will go on and log in the user to my app");
+            console.log(`the access token: ${userProfile.access_token}`);
+            axios.post("http://localhost:8000/auth/login_google", 
+            {
+                access_token: userProfile.access_token
+            },
+            {
+                headers: {'Content-Type': 'application/json'} 
+            });
+        }
+
+    }, [userDetails])
 
     return (
         <div>

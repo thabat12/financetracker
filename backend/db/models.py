@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey
+from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -19,11 +19,13 @@ class User(Base):
     __tablename__ = 'financetracker_user'
     # identification
     user_id = Column(String(Constants.IDSizes.SMALL), primary_key=True, nullable=False)
+    user_type = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    is_verified = Column(Boolean, nullable=False)
     created_at = Column(DateTime, nullable=False)
     last_login_at = Column(DateTime, nullable=False)
     access_key = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
     user_first_name = Column(String(Constants.IDSizes.SMALL), nullable=False)
-    user_last_name = Column(String(Constants.IDSizes.SMALL), nullable=False)
+    user_last_name = Column(String(Constants.IDSizes.SMALL), nullable=True)
     user_email = Column(String(Constants.IDSizes.MEDIUM), nullable=False)
     user_profile_picture = Column(String(Constants.IDSizes.XLARGE), nullable=True)
     transactions_sync_cursor = Column(String(Constants.IDSizes.LARGE), nullable=True)
@@ -32,7 +34,23 @@ class User(Base):
     accounts = relationship('Account', backref='user', lazy='select', cascade='all, delete-orphan')
     transactions = relationship('Transaction', backref='user', lazy='select', cascade='all, delete-orphan')
     subscriptions = relationship('Subscription', backref='user', lazy='select', cascade='all, delete-orphan')
+    auth_sessions = relationship('AuthSession', backref='user', lazy='select', cascade='all, delete-orphan')
+
+class GoogleUser(Base):
+    __tablename__ = 'google_user'
+    google_user_id = Column(String(Constants.IDSizes.LARGE), primary_key=True, nullable=False)
+    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), nullable=False)
     
+    # one to one
+    user = relationship('User', backref='google_user', uselist=False)
+
+class AuthSession(Base):
+    __tablename__ = 'auth_session'
+    auth_session_token_id = Column(String(Constants.IDSizes.LARGE), primary_key=True, nullable=False)
+    session_expiry_time = Column(DateTime, nullable=False)
+    # one (User) -> many (AuthSession)
+    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), nullable=False)
+
 class Account(Base):
     __tablename__ = 'account'
     # note: use Plaid's persistent_account_id to populate this
