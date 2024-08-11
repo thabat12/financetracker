@@ -5,11 +5,17 @@ import axios, { AxiosResponse } from "axios";
 // using someone else's component for react one tap login
 import { useGoogleOneTapLogin } from "react-google-one-tap-login";
 import { jwtDecode } from "jwt-decode";
-
+import { useDispatch, UseDispatch, useSelector } from "react-redux";
+import { updateAuthorization } from "../redux-store/slices/authorizationSlice";
+import { useNavigate } from "react-router-dom";
 
 const clientId = "797734322196-9i7q2teoas355etda5poi48mll0b3r2l.apps.googleusercontent.com";
 
 function SplashPage() {
+
+    const authorizationToken = useSelector((state: any) => state.authorization);
+    const dispatch = useDispatch();
+    const navigate = useNavigate();
 
     type UserProfileType = {
         access_token? : string;
@@ -93,7 +99,16 @@ function SplashPage() {
             },
             {
                 headers: {'Content-Type': 'application/json'} 
-            });
+            }).then((response) => {
+                console.log(response);
+                const authorizationToken = response.data.authorization_token;
+
+                console.log(`The authorizatoin token given is: ${authorizationToken}`);
+
+                dispatch(updateAuthorization(authorizationToken));
+
+                navigate("/link_plaid");
+            })
         }
 
     }, [userDetails])
@@ -114,6 +129,10 @@ function SplashPage() {
                         <p>
                             {JSON.stringify(userDetails, null, 2)}
                         </p>
+
+                        <label><strong>The authorization token given to us</strong></label>
+                        <br/>
+                        {authorizationToken}
                     </div>
 
             </div>

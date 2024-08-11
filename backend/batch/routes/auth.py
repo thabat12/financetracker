@@ -16,20 +16,11 @@ import string
 import secrets
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
+
 from db.models import *
+from batch.config import Session, async_database_engine, settings
 
-load_dotenv()
 
-class Settings(BaseSettings):
-        async_sqlalchemy_database_uri: str
-        sqlalchemy_database_uri: str
-        test_plaid_url: str
-        test_plaid_client_id: str
-        plaid_secret: str
-        auth_secret_key: str
-settings = Settings()
-async_database_engine = create_async_engine(settings.async_sqlalchemy_database_uri)
-Session = sessionmaker(bind=async_database_engine, class_=AsyncSession, expire_on_commit=False)
 SECRET_KEY = bytes(settings.auth_secret_key, encoding='utf-8')
 
 @asynccontextmanager
@@ -55,13 +46,29 @@ def generate_token(user_id: str) -> str:
     
     return token
 
-def verify_token(token: str) -> bool:
+async def verify_token(token: str) -> tuple[bool, str]:
+
+    async with Session() as session:
+        async with session.begin():
+            auth_session: AuthSession = await session.get(AuthSession, token)
+            expiry_time = auth_session.session_expiry_time
+
+            if datetime.now() > expiry_time:
+                return False, None
+            else:
+                cur_user = auth_session.user_id
+
     try:
         token_data, token_signature = token.rsplit(":", 1)
         expected_signature = hmac.new(SECRET_KEY, token_data.encode(), hashlib.sha256).hexdigest()
-        return hmac.compare_digest(expected_signature, token_signature)
+        result = hmac.compare_digest(expected_signature, token_signature)
+
+        if result:
+            return True, cur_user
+        else:
+            return False, None
     except Exception:
-        return False
+        raise HTTPException(status_code=500, detail='Something internally went wrong!')
 
 class CreateAccountRequest(BaseModel):
     user_type: str
