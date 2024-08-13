@@ -89,10 +89,9 @@ async def link_account(authorization: str = Header(...)):
 
         print('getting public token')
         public_token = await plaid_get_public_token(cur_user)
-        print('yeah the public token is this:', public_token)
+        print('the public token is this:', public_token)
         await plaid_exchange_public_token(cur_user, public_token)
         print('and the public token is exchanged for access token, and user is set up!')
-        
     else:
         print('token is invalid for some reason')
 
@@ -103,8 +102,6 @@ async def link_account(authorization: str = Header(...)):
 class ExchangePublicTokenRequest(BaseModel):
     user_id: str
     public_token: str
-
-
 
 
 @plaid_router.post('/exchange_public_token')

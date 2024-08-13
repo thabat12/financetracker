@@ -9,9 +9,12 @@ const authorizationSlice = createSlice({
     reducers: {
         updateAuthorization(state, action) {
             return action.payload;
+        },
+        clearAuthorization(state) {
+            return "";
         }
     }
 });
 
-export const {updateAuthorization} = authorizationSlice.actions;
+export const {updateAuthorization, clearAuthorization} = authorizationSlice.actions;
 export default authorizationSlice.reducer;

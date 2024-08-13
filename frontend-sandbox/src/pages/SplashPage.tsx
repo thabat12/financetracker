@@ -6,7 +6,7 @@ import axios, { AxiosResponse } from "axios";
 import { useGoogleOneTapLogin } from "react-google-one-tap-login";
 import { jwtDecode } from "jwt-decode";
 import { useDispatch, UseDispatch, useSelector } from "react-redux";
-import { updateAuthorization } from "../redux-store/slices/authorizationSlice";
+import { updateAuthorization, clearAuthorization } from "../redux-store/slices/authorizationSlice";
 import { useNavigate } from "react-router-dom";
 
 const clientId = "797734322196-9i7q2teoas355etda5poi48mll0b3r2l.apps.googleusercontent.com";
@@ -43,6 +43,7 @@ function SplashPage() {
     });
 
     const handleLogout = () => {
+        dispatch(clearAuthorization());
         googleLogout();
         setUserProfile({});
     }
