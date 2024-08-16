@@ -61,6 +61,8 @@ class Account(Base):
     iso_currency_code = Column(String(Constants.IDSizes.SMALL), nullable=True)
     account_name = Column(String(Constants.IDSizes.LARGE), nullable=True)
     account_type = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    update_status = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    update_status_date = Column(DateTime, nullable=True)
 
     # one to many
     transactions = relationship('Transaction', backref='account', lazy='select', cascade='all, delete-orphan')
@@ -89,6 +91,8 @@ class Transaction(Base):
     amount = Column(Float, nullable=False)
     authorized_date = Column(DateTime, nullable=True)
     personal_finance_category = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+    update_status = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    update_status_date = Column(DateTime, nullable=True)
 
     # one (User) -> many (Transaction)
     user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), \
@@ -100,7 +104,7 @@ class Transaction(Base):
     
     # one (Merchant) -> many (Transaction)
     merchant_id = Column(String(Constants.IDSizes.MEDIUM), \
-                            ForeignKey(f'{Merchant.__tablename__}.merchant_id'), nullable=False)
+                            ForeignKey(f'{Merchant.__tablename__}.merchant_id'), nullable=True)
     
 class Subscription(Base):
     __tablename__ = 'subscription'
@@ -137,12 +141,38 @@ class PUser(PORM):
 
 class PAccount(PORM):
     account_id: str
+    balance_available: Optional[float] = None
+    balance_current: Optional[float] = None
+    iso_currency_code: Optional[str] = None
+    account_name: Optional[str] = None
+    account_type: Optional[str] = None
+    update_status: Optional[str] = None
+    update_status_date: Optional[datetime] = None
+    user_id: str
+
+    class Config:
+        orm_mode = True
 
 class PMerchant(PORM):
     merchant_id: str
+    merchant_name: str
+    merchant_logo: Optional[str] = None
 
 class PTransaction(PORM):
     transaction_id: str
+    amount: float
+    authorized_date: Optional[datetime] = None
+    personal_finance_category: Optional[str] = None
+    update_status: Optional[str] = None
+    update_status_date: Optional[datetime] = None
+
+    # Relationships
+    user_id: str
+    account_id: str
+    merchant_id: Optional[str] = None
+
+    class Config:
+        orm_mode = True
 
 class PSubscription(PORM):
     subscription_id: int

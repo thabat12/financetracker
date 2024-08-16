@@ -54,6 +54,7 @@ async def verify_token(token: str) -> tuple[bool, str]:
             expiry_time = auth_session.session_expiry_time
 
             if datetime.now() > expiry_time:
+                print('user session is invalid now!')
                 return False, None
             else:
                 cur_user = auth_session.user_id

@@ -18,13 +18,12 @@ function DashboardPage() {
             </div>
 
             <div>
-
+                <Outlet/>
                 {/* <Routes>
                     <Route path="/dashboard/summary" element={<SummaryPage/>}/>
                     <Route path="/dashboard/transactions" element={<TransactionsPage/>}/>
                     <Route path="/dashboard/settings" element={<SettingsPage/>}/>
                 </Routes> */}
-                <Outlet/>
             </div>
 
 
