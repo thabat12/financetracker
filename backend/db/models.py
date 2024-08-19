@@ -29,6 +29,7 @@ class User(Base):
     user_email = Column(String(Constants.IDSizes.MEDIUM), nullable=False)
     user_profile_picture = Column(String(Constants.IDSizes.XLARGE), nullable=True)
     transactions_sync_cursor = Column(String(Constants.IDSizes.LARGE), nullable=True)
+    last_transactions_account_sync = Column(DateTime, nullable=True)
 
     # one to many
     accounts = relationship('Account', backref='user', lazy='select', cascade='all, delete-orphan')
@@ -88,6 +89,8 @@ class Transaction(Base):
     __tablename__ = 'transaction'
     transaction_id = Column(String(Constants.IDSizes.MEDIUM), primary_key=True, \
                                nullable=False)
+    name = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+    is_pending = Column(Boolean, nullable=True)
     amount = Column(Float, nullable=False)
     authorized_date = Column(DateTime, nullable=True)
     personal_finance_category = Column(String(Constants.IDSizes.MEDIUM), nullable=True)

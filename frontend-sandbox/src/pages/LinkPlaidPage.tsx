@@ -17,7 +17,9 @@ function LinkPlaidPage() {
         }).then(
             (response) => {
                 console.log(response);
-                navigate("/dashboard");
+                if (response.data.message == 'success') {
+                    navigate("/dashboard");
+                }
             }
         )
     };

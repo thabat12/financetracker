@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException
-from sqlalchemy import select, update, delete, create_engine
+from sqlalchemy import select, update, delete, create_engine, asc, desc
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from pydantic import BaseModel
@@ -22,6 +22,8 @@ from batch.config import Session, async_database_engine, settings
 
 
 SECRET_KEY = bytes(settings.auth_secret_key, encoding='utf-8')
+# number of auth sessions at once a user can have
+SESSION_LIMIT = 3
 
 @asynccontextmanager
 async def lifespan():
@@ -50,11 +52,17 @@ async def verify_token(token: str) -> tuple[bool, str]:
 
     async with Session() as session:
         async with session.begin():
+            session: AsyncSession
             auth_session: AuthSession = await session.get(AuthSession, token)
+
+            if not auth_session:
+                return False, None
+            
             expiry_time = auth_session.session_expiry_time
 
             if datetime.now() > expiry_time:
-                print('user session is invalid now!')
+                await session.delete(auth_session)
+                await session.commit()
                 return False, None
             else:
                 cur_user = auth_session.user_id
@@ -109,13 +117,13 @@ async def create_account(new_user: CreateAccountRequest, link_id: str) -> Create
     try:
         async with Session() as session:
             async with session.begin():
+                session: AsyncSession
                 session.add(new_user)
                 session.add(google_user)
                 await session.commit()
     except Exception as e:
         raise HTTPException(status_code=500, detail='Database Operation Failed!') from e
     
-    print("i am done creating the account?")
     return CreateAccountReturn(message=MessageEnum.CREATED, user_id=uuid)
 
 class LoginGoogleRequest(BaseModel):
@@ -152,7 +160,6 @@ async def login_google_db_operation(user_info: GoogleAuthUserInfo) -> LoginGoogl
                 elif len(user_name_info) > 1:
                     first_name, last_name = user_name_info[0], user_name_info[-1]
 
-                print('this is the user_info object:', user_info)
                 create_account_request = CreateAccountRequest(
                     first_name=first_name,
                     last_name=last_name,
@@ -162,21 +169,17 @@ async def login_google_db_operation(user_info: GoogleAuthUserInfo) -> LoginGoogl
                 )
 
                 response: CreateAccountReturn = await create_account(create_account_request, user_info.id)
-                print('create account done and back at login_google_db_operation')
                 result.message = MessageEnum.CREATED
                 result.user_id = response.user_id
             # user already exists so return the state of this user
             else:
-                    print('user already exists but i still need the internal app user id')
                     cur_user_id: str = google_user.user_id
                     cur_user: User = await dbsess.get(User, cur_user_id)
-                    print('cur user is', cur_user)
 
                     cur_user.last_login_at = datetime.now()
                     user_id = cur_user.user_id
 
                     await dbsess.commit()
-                    print('data is committed on the database')
 
                     result.message = MessageEnum.LOGIN
                     result.user_id = user_id
@@ -188,6 +191,22 @@ async def create_auth_session(user_id: str):
 
     async with Session() as session:
         async with session.begin():
+            session: AsyncSession
+            smt = select(AuthSession.auth_session_token_id).where(AuthSession.user_id == user_id).order_by(asc(AuthSession.session_expiry_time))
+            cur_sessions = await session.scalars(smt)
+            cur_sessions = cur_sessions.all()
+
+            if cur_sessions:
+                if len(cur_sessions) == 3:
+                    print('deleting a certain auth session')
+                    to_del_id = cur_sessions[0]
+
+                    smt = delete(AuthSession).where(AuthSession.auth_session_token_id == to_del_id)
+                    await session.execute(smt)
+                elif len(cur_sessions) > 3:
+                    raise Exception('oops! somehow, there are more than 3 sessions on the table for user', user_id)
+            
+            # after all the corresponding deletes, create the new auth session
             auth_session = AuthSession(auth_session_token_id=auth_token, \
                 session_expiry_time=datetime.now() + timedelta(minutes=30), user_id=user_id)
             
@@ -208,12 +227,10 @@ async def login_google(request: LoginGoogleRequest):
             raise HTTPException(status_code=500, detail='Access Token Provided is Invalid!')
         else:
             result: LoginGoogleReturn = await login_google_db_operation(user_info=user_info)
-            print('i am at the /login_google endpoint and finished retrieving the result')
             auth_token = await create_auth_session(result.user_id)
-            print('i also got the auth token?')
     
     return {
-        'message': 'created' if result.message == MessageEnum.CREATED else 'login',
         'authorization_token': auth_token,
-        'user_id': result.user_id
+        'user_id': result.user_id,
+        'account_status': result.message
     }

@@ -1,9 +1,9 @@
 from pydantic import BaseModel
-from pydantic_settings import BaseSettings
 from fastapi import APIRouter, HTTPException, Header
 import httpx
+from enum import Enum
 
-from batch.config import Session, async_database_engine, settings, yield_db
+from batch.config import Session, settings, yield_db, logger
 from batch.routes.auth import verify_token
 from db.models import *
 
@@ -11,6 +11,7 @@ plaid_router = APIRouter()
 
 
 async def plaid_exchange_public_token(user_id, public_token):
+    logger.info('/plaid/plaid_exchange_public_token')
     access_token = None
     try:
         async with httpx.AsyncClient() as client:
@@ -24,10 +25,12 @@ async def plaid_exchange_public_token(user_id, public_token):
                 }
             )
 
+            logger.info('/plaid/plaid_exchange_public_token: plaid endpoint /item/public_token/exchange called')
+
             resp = resp.json()
             access_token = resp['access_token']
     except Exception as e:
-        print(e)
+        logger.error('/plaid/plaid_exchange_public_token: plaid endpoint failed!')
         raise HTTPException(status_code=500, detail='Plaid Endpoint Failed!') from e
     
 
@@ -43,16 +46,17 @@ async def plaid_exchange_public_token(user_id, public_token):
         print(e)
         raise HTTPException(status_code=500, detail='Database Update Failed!') from e
 
-
 class GetPublicTokenRequest(BaseModel):
     user_id: str
 
 async def plaid_get_public_token(uuid: str):
+    logger.info('/plaid/plaid_get_public_token: called')
     async for dbsess in yield_db():
         async with dbsess.begin():
             public_token = None
             try:
                 async with httpx.AsyncClient() as client:
+                    logger.info('/plaid/plaid_get_public_token: calling plaid endpoint /sandbox/public_token/create')
                     resp = await client.post(f'{settings.test_plaid_url}/sandbox/public_token/create',
                                             headers={'Content-Type': 'application/json'},
                                             json={
@@ -66,48 +70,44 @@ async def plaid_get_public_token(uuid: str):
                                             })
                     resp = resp.json()
                     public_token = resp['public_token']
+                    logger.info('/plaid/plaid_get_pubic_token: public token created')
             except Exception as e:
-                print(e)
+                logger.error('/plaid/plaid_get_public_token: plaid endpoint request failed')
                 raise HTTPException(status_code=500, detail='Plaid Endpoint Request Failed') from e
             
             return public_token
     return None
 
+class LinkAccountResponseEnum(Enum):
+    SUCCESS = 'success'
+    INVALID_AUTH = 'invalid_auth'
+    ALREADY_LINKED = 'already_linked'
+
+class LinkAccountResponse(BaseModel):
+    message: LinkAccountResponseEnum
+
 @plaid_router.post('/link_account')
 async def link_account(authorization: str = Header(...)):
-    print(f'the authorization header value is: {authorization}')
-
+    logger.info('/plaid/link_account: called')
     token = authorization.strip().split(' ')[-1].strip()
 
-    print(f'parsed out token is {token}')
-
     # for every plaid endpoint, must verify the authentication token from now on
-    (res, cur_user) = await verify_token(token)
+    (res, cur_user_id) = await verify_token(token)
 
-    if res:
-        print('token is valid!')
+    if not res:
+        logger.info(f'/plaid/link_account: {cur_user_id} auth_session is invalid')
+        return LinkAccountResponse(message=LinkAccountResponseEnum.INVALID_AUTH)
 
-        print('getting public token')
-        public_token = await plaid_get_public_token(cur_user)
-        print('the public token is this:', public_token)
-        await plaid_exchange_public_token(cur_user, public_token)
-        print('and the public token is exchanged for access token, and user is set up!')
-    else:
-        print('token is invalid for some reason')
+    # first make sure that the user is not already linked
+    async with Session() as session:
+        async with session.begin():
+            cur_user: User = await session.get(User, cur_user_id)
+            if cur_user.access_key is not None:
+                logger.error(f'/plaid/link_account: {cur_user_id} the account is already linked!')
+                return LinkAccountResponse(message=LinkAccountResponseEnum.ALREADY_LINKED)
 
-    return {
-        'message': 'hi'
-    }
-
-class ExchangePublicTokenRequest(BaseModel):
-    user_id: str
-    public_token: str
-
-
-@plaid_router.post('/exchange_public_token')
-async def exchange_public_token(request: ExchangePublicTokenRequest):
-    await plaid_exchange_public_token(request.user_id, request.public_token)
-    return {'message': 'success'}
-
-class GetTransactionsRequest(BaseModel):
-    user_id: str
+    logger.info(f'/plaid/link_account: {cur_user_id} token is being generated')
+    public_token = await plaid_get_public_token(cur_user_id)
+    await plaid_exchange_public_token(cur_user_id, public_token)
+        
+    return LinkAccountResponse(message=LinkAccountResponseEnum.SUCCESS)

@@ -1,16 +1,17 @@
 from enum import Enum
 from pydantic import BaseModel
+from logging import Logger
 from fastapi import APIRouter, HTTPException, Header
 from sqlalchemy import select, update, case, delete, text
+from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 import json
 
-from batch.config import Session, settings
+from batch.config import Session, settings, logger
 from batch.routes.auth import verify_token
 from db.models import *
 
 data_router = APIRouter()
-
 
 class PlaidBalance(BaseModel):
     available: Optional[float | None] = None
@@ -179,7 +180,7 @@ class PlaidTransaction(BaseModel):
     personal_finance_category: PlaidTransactionPersonalFinanceCategory | None
     personal_finance_category_icon_url: str | None
     transaction_id: str | None
-    website: str | None          
+    website: str | None         
 
 class PlaidRefreshTransactionsResponse(BaseModel):
     added: Optional[List[PlaidTransaction]] = None
@@ -191,6 +192,7 @@ class PlaidRefreshTransactionsResponse(BaseModel):
 
 '''
 async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List[PlaidTransaction]:
+    logger.info('/data/plaid_refresh_transactions')
     transaction_hash = hash(f'plaid_refresh_transactions:{user_id}') & 0x7fffffffffffffff
 
     async with Session() as session:
@@ -207,14 +209,14 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
             async with httpx.AsyncClient() as client:
 
                 # need to be careful here because of a while loop so adding this limit stopper
-                limit = 100
+                limit = 20
                 has_more = True
 
                 added, modified, removed = [], [], []
 
                 while has_more:
                     if limit == 0:
-                        raise HTTPException(status_code=500, detail='Detected more than 100 calls to Plaid API on plaid_refresh_transactions!!! DANGER')
+                        raise HTTPException(status_code=500, detail=f'Detected more than {limit} calls to Plaid API on plaid_refresh_transactions!!! DANGER')
                     
                     print('the cur transactions cursor', cur_transactions_cursor)
 
@@ -229,9 +231,10 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
                             'count': 500
                         }
                     )
-
+                    logger.info(f'/data/plaid_refresh_transactions: {user_id} plaid endpoint for /transactions/sync is called')
                     resp = resp.json()
 
+                    print('THE DATA')
                     print(json.dumps(resp, indent=4, sort_keys=True))
 
                     added.extend(list(map(lambda r: PlaidTransaction(**r), resp['added'])))
@@ -248,16 +251,13 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
             current_transactions_indb = await session.scalars(select(Transaction.transaction_id).where(Transaction.user_id == user_id))
             current_transactions_indb = set(current_transactions_indb.all())
 
-
-            print('here are the lengths of the added, modified, and removed lists')
-            print(len(added), len(modified), len(removed))
-
             # current time 
             now = datetime.now()
             
             # set the transactions sync cursor
             user.transactions_sync_cursor = cur_transactions_cursor
 
+            logger.info(f'/data/plaid_refresh_transactions: {user_id} adding {len(added)} transactions to database')
             for added_transaction in added:
                 added_transaction: PlaidTransaction
 
@@ -271,6 +271,8 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
                 session.add(
                     Transaction(
                         transaction_id = added_transaction.transaction_id,
+                        name = added_transaction.name,
+                        is_pending = added_transaction.pending,
                         amount = added_transaction.amount,
                         authorized_date = datetime.strptime(added_transaction.authorized_date, '%Y-%m-%d') if added_transaction.authorized_date else None,
                         personal_finance_category = added_transaction.personal_finance_category.primary,
@@ -282,6 +284,7 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
                     )
                 )
 
+            logger.info(f'/data/plaid_refresh_transactions: {user_id} modifying {len(modified)} transactions to database')
             for modified_transaction in modified:
                 modified_transaction: PlaidTransaction
 
@@ -300,11 +303,14 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
                     'personal_finance_category': added_transaction.personal_finance_category.primary,
                     'user_id': user_id,
                     'account_id': added_transaction.account_id,
-                    'merchant_id': added_transaction.merchant_entity_id
+                    'merchant_id': added_transaction.merchant_entity_id,
+                    'is_pending': added_transaction.pending,
+                    'name': added_transaction.name
                 })
 
                 await session.execute(smt)
 
+            logger.info(f'/data/plaid_refresh_transactions: {user_id} removing {len(removed)} transactions to database')
             for removed_transaction in removed:
                 removed_transaction: PlaidTransaction
 
@@ -315,12 +321,26 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
 
             await session.commit()
 
-
+            logger.info(f'/data/plaid_refresh_transactions: {user_id} transaction modifications set')
             return PlaidRefreshTransactionsResponse(added=added, modified=modified, removed=removed)
 
 async def plaid_refresh_user_account_data(user_id, user_access_key):
-    await plaid_refresh_accounts(user_id=user_id, user_access_key=user_access_key)
-    await plaid_refresh_transactions(user_id=user_id, user_access_key=user_access_key)
+    logger.info('/data/plaid_refresh_user_account_data')
+    try:
+        await plaid_refresh_accounts(user_id=user_id, user_access_key=user_access_key)
+        await plaid_refresh_transactions(user_id=user_id, user_access_key=user_access_key)
+        logger.log(f'/data/plaid_refresh_user_account_data: {user_id} refreshed all account and transaction data')
+
+        # upon successful 
+        async with Session() as session:
+            async with session.begin():
+                logger.info(f'/data/plaid_refresh_user_account_data: {user_id} updating last_transactions_account_sync')
+                session: AsyncSession
+                cur_user = await session.get(User, user_id)
+                cur_user.last_transactions_account_sync = datetime.now()
+                await session.commit()
+    except Exception as e:
+        raise e
 
 
 class DBGetTransactionsEnum(Enum):
@@ -339,19 +359,21 @@ class DBGetTransactionsResponse(BaseModel):
     accounts: Optional[DBGetTransactionsResponseAccounts] = None
 
 async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) -> DBGetTransactionsResponse:
-
+    logger.info('/data/db_get_transactions')
     async with Session() as session:
         async with session.begin():
             cur_user: User = await session.get(User, user_id)
 
 
     # necessary account + transaction data refresh
-    if cur_user.last_login_at.day < datetime.now().day:
+    if cur_user.last_transactions_account_sync is None or cur_user.last_transactions_account_sync.day < datetime.now().day:
+        logger.info(f'/data/db_get_transactions: {user_id} must sync with transactions! refreshing transactions data...')
         await plaid_refresh_user_account_data(user_id=user_id, user_access_key=cur_user.access_key)
     
     # get all the transactions
     async with Session() as session:
         async with session.begin():
+            logger.info(f'/data/db_get_transactions: {user_id} filling in all transaction/ account data as response object')
             cur_user: User = await session.get(User, user_id)
 
             if data_type == DBGetTransactionsEnum.TRANSACTIONS:
@@ -359,7 +381,6 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
                 all_transactions = await session.scalars(select(Transaction).where(User.user_id == cur_user.user_id))
                 all_transactions = all_transactions.all()
 
-    
                 transactions: List[PTransaction] = []
                 merchant_ids: List[str] = []
 
@@ -378,7 +399,7 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
                     merchants.append(PMerchant.model_validate(merchant))
                 
                 transactions_resp = DBGetTransactionsResponseTransactions(transactions=transactions, merchants=merchants)
-                
+                logger.info(f'/data/db_get_transactions: {user_id} all transaction information filled in!')
                 return DBGetTransactionsResponse(transactions=transactions_resp)
             
             elif data_type == DBGetTransactionsEnum.ACCOUNTS:
@@ -397,12 +418,18 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
 
                 return DBGetTransactionsResponse(accounts=accounts_resp)
 
+class GetTransactionsResponseEnum(Enum):
+    SUCCESS = 'success'
+    INVALID_AUTH = 'invalid_auth'
+
 class GetTransactionsResponse(BaseModel):
-    transactions: Optional[List[PTransaction]]
+    message: GetTransactionsResponseEnum = None
+    transactions: Optional[List[PTransaction]] = None
     merchants: Optional[List[PMerchant]] = None
 
 @data_router.post('/get_transactions')
-async def get_transactions(authorization: str = Header(...)):
+async def get_transactions(authorization: str = Header(...)) -> GetTransactionsResponse:
+    logger.info('/data/get_transactions')
     token = authorization.strip().split(' ')[-1].strip()
 
     res: bool
@@ -410,12 +437,17 @@ async def get_transactions(authorization: str = Header(...)):
     (res, cur_user) = await verify_token(token)
 
     if not cur_user:
-        raise HTTPException(status_code=500, detail='User session is invalid!')
+        logger.error(f'/data/get_transactions: provided authorization token is invalid!')
+        return GetTransactionsResponse(message=GetTransactionsResponseEnum.INVALID_AUTH)
 
     if res:
         transactions: DBGetTransactionsResponse = await db_get_transactions(user_id=cur_user, data_type=DBGetTransactionsEnum.TRANSACTIONS)
+        transactions: DBGetTransactionsResponseTransactions = transactions.transactions
+        # re-parse everything to the gettransactionsresponse object
+        transactions = GetTransactionsResponse(message=GetTransactionsResponseEnum.SUCCESS,transactions=transactions.transactions, merchants=transactions.merchants)
 
-    return transactions.transactions
+    logger.info(f'/data/get_transactions: the data returned!')
+    return transactions
 
 @data_router.post('/get_accounts')
 async def get_accounts(authorization: str = Header(...)):

@@ -1,10 +1,14 @@
 import os
+import logging
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class Settings(BaseSettings):
     async_sqlalchemy_database_uri: str
