@@ -7,9 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 import json
 
-from batch.config import Session, settings, logger
-from batch.routes.auth import verify_token
+from api.config import Session, settings, logger
+from api.routes.auth import verify_token
+from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data
 from db.models import *
+
 
 data_router = APIRouter()
 
@@ -40,9 +42,15 @@ class PlaidRefreshAccountsResponse(BaseModel):
 
 '''
 async def plaid_refresh_accounts(user_id: str, user_access_key: str) -> List[List[PlaidAccount]]:
-
+    logger.info('/data/plaid_refresh_accounts')
     async with httpx.AsyncClient() as client:
         client: httpx.AsyncClient
+
+        print({
+                'client_id': settings.test_plaid_client_id,
+                'secret': settings.plaid_secret,
+                'access_token': user_access_key
+            })
         
         resp = await client.post(
             f'{settings.test_plaid_url}/auth/get',
@@ -329,7 +337,7 @@ async def plaid_refresh_user_account_data(user_id, user_access_key):
     try:
         await plaid_refresh_accounts(user_id=user_id, user_access_key=user_access_key)
         await plaid_refresh_transactions(user_id=user_id, user_access_key=user_access_key)
-        logger.log(f'/data/plaid_refresh_user_account_data: {user_id} refreshed all account and transaction data')
+        logger.info(f'/data/plaid_refresh_user_account_data: {user_id} refreshed all account and transaction data')
 
         # upon successful 
         async with Session() as session:
@@ -364,11 +372,15 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
         async with session.begin():
             cur_user: User = await session.get(User, user_id)
 
+            user_key = decrypt_data(cur_user.user_key, db_key_bytes)
+            user_access_key = decrypt_data(cur_user.access_key, user_key).decode('utf-8')
+            logger.info(f'THIS IS THE USER ACCESS KEY: {user_access_key}')
+
 
     # necessary account + transaction data refresh
     if cur_user.last_transactions_account_sync is None or cur_user.last_transactions_account_sync.day < datetime.now().day:
         logger.info(f'/data/db_get_transactions: {user_id} must sync with transactions! refreshing transactions data...')
-        await plaid_refresh_user_account_data(user_id=user_id, user_access_key=cur_user.access_key)
+        await plaid_refresh_user_account_data(user_id=user_id, user_access_key=user_access_key)
     
     # get all the transactions
     async with Session() as session:

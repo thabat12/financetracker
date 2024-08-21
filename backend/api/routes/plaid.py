@@ -3,9 +3,10 @@ from fastapi import APIRouter, HTTPException, Header
 import httpx
 from enum import Enum
 
-from batch.config import Session, settings, yield_db, logger
-from batch.routes.auth import verify_token
+from api.config import Session, settings, yield_db, logger
+from api.routes.auth import verify_token
 from db.models import *
+from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data
 
 plaid_router = APIRouter()
 
@@ -37,10 +38,12 @@ async def plaid_exchange_public_token(user_id, public_token):
     try:
         async for dbsess in yield_db():
             async with dbsess.begin():
+                cur_user: User
                 cur_user = await dbsess.get(User, user_id)
                 if not cur_user:
                     raise HTTPException(status_code=500, detail='User does not exist!')
-                cur_user.access_key = access_token
+                user_key = decrypt_data(cur_user.user_key, db_key_bytes)
+                cur_user.access_key = encrypt_data(bytes(access_token, encoding='utf-8'), user_key)
                 await dbsess.commit()
     except Exception as e:
         print(e)

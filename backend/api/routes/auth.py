@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select, update, delete, create_engine, asc, desc
 from sqlalchemy.orm import sessionmaker
@@ -18,7 +20,8 @@ from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 
 from db.models import *
-from batch.config import Session, async_database_engine, settings
+from api.config import Session, async_database_engine, settings, logger
+from api.crypto.crypto import encrypt_data, decrypt_data, db_key_bytes
 
 
 SECRET_KEY = bytes(settings.auth_secret_key, encoding='utf-8')
@@ -95,7 +98,7 @@ class CreateAccountReturn(BaseModel):
     user_id: str
 
 async def create_account(new_user: CreateAccountRequest, link_id: str) -> CreateAccountReturn:
-
+    logger.info('/auth/create_account')
     uuid = generate_random_id()
 
     new_user = User(
@@ -108,7 +111,8 @@ async def create_account(new_user: CreateAccountRequest, link_id: str) -> Create
         user_last_name=new_user.last_name,
         user_email=new_user.user_email,
         user_profile_picture=new_user.user_profile_picture,
-        user_type=new_user.user_type
+        user_type=new_user.user_type,
+        user_key=encrypt_data(os.urandom(32), db_key_bytes)
     )
 
     if new_user.user_type == 'google':
@@ -122,6 +126,7 @@ async def create_account(new_user: CreateAccountRequest, link_id: str) -> Create
                 session.add(google_user)
                 await session.commit()
     except Exception as e:
+        logger.error(str(e))
         raise HTTPException(status_code=500, detail='Database Operation Failed!') from e
     
     return CreateAccountReturn(message=MessageEnum.CREATED, user_id=uuid)
@@ -146,6 +151,7 @@ class GoogleAuthUserInfo(BaseModel):
     error_description: Optional[str] = None
 
 async def login_google_db_operation(user_info: GoogleAuthUserInfo) -> LoginGoogleReturn:
+    logger.info('/auth/login_google_db_operation')
     result: LoginGoogleReturn = LoginGoogleReturn()
     async with Session() as dbsess:
         async with dbsess.begin():
@@ -153,6 +159,7 @@ async def login_google_db_operation(user_info: GoogleAuthUserInfo) -> LoginGoogl
             
             # I have to create the google user
             if not google_user:
+                logger.info('/auth/login_google_db_operation: user does not exist, creating account')
                 user_name_info = user_info.name.strip().split(' ')
                 if len(user_name_info) == 1:
                     first_name = user_name_info[0]
@@ -174,6 +181,7 @@ async def login_google_db_operation(user_info: GoogleAuthUserInfo) -> LoginGoogl
             # user already exists so return the state of this user
             else:
                     cur_user_id: str = google_user.user_id
+                    logger.info(f'/auth/login_google_db_operation: {cur_user_id} google user already exists')
                     cur_user: User = await dbsess.get(User, cur_user_id)
 
                     cur_user.last_login_at = datetime.now()
@@ -187,6 +195,7 @@ async def login_google_db_operation(user_info: GoogleAuthUserInfo) -> LoginGoogl
     return result
 
 async def create_auth_session(user_id: str):
+    logger.info('/auth/create_auth_session')
     auth_token = generate_token(user_id=user_id)
 
     async with Session() as session:
@@ -198,7 +207,7 @@ async def create_auth_session(user_id: str):
 
             if cur_sessions:
                 if len(cur_sessions) == 3:
-                    print('deleting a certain auth session')
+                    logger.info(f'/auth/create_auth_session: {user_id} deleting oldest auth session')
                     to_del_id = cur_sessions[0]
 
                     smt = delete(AuthSession).where(AuthSession.auth_session_token_id == to_del_id)
@@ -207,6 +216,7 @@ async def create_auth_session(user_id: str):
                     raise Exception('oops! somehow, there are more than 3 sessions on the table for user', user_id)
             
             # after all the corresponding deletes, create the new auth session
+            logger.info(f'/auth/create_auth_session: {user_id} creating auth session for')
             auth_session = AuthSession(auth_session_token_id=auth_token, \
                 session_expiry_time=datetime.now() + timedelta(minutes=30), user_id=user_id)
             
@@ -217,15 +227,18 @@ async def create_auth_session(user_id: str):
 
 @auth_router.post('/login_google')
 async def login_google(request: LoginGoogleRequest):
-
+    logger.info('auth/login_google')
     async with httpx.AsyncClient() as client:
+        logger.info(f'auth/login_google: requesting google to validate access token')
         response = await client.get(f'{GOOGLE_AUTH_USERINFO_URL}?access_token={request.access_token}')
         response = response.json()
         user_info = GoogleAuthUserInfo.model_validate(response)
 
         if user_info.error is not None:
+            logger.error('auth/login_google: invalid access token provided')
             raise HTTPException(status_code=500, detail='Access Token Provided is Invalid!')
         else:
+            logger.info('auth/login_google: logging into google...')
             result: LoginGoogleReturn = await login_google_db_operation(user_info=user_info)
             auth_token = await create_auth_session(result.user_id)
     

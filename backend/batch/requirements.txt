@@ -1,7 +1,0 @@
-quart
-sqlalchemy
-uvicorn
-fastapi[all]
-asyncpg
-PyJWT
-redis

@@ -11,8 +11,8 @@ test_models:
 	@python -m db.test_models
 
 # running stuff
-run_batch:
-	@uvicorn batch.batch:app --reload --log-level debug
+run_api:
+	@uvicorn api.api:app --reload --log-level debug
 
 # database migration solution
 migrate_db: ./db/models.py

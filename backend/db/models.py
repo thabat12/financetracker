@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean
+from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -23,13 +23,16 @@ class User(Base):
     is_verified = Column(Boolean, nullable=False)
     created_at = Column(DateTime, nullable=False)
     last_login_at = Column(DateTime, nullable=False)
-    access_key = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
     user_first_name = Column(String(Constants.IDSizes.SMALL), nullable=False)
     user_last_name = Column(String(Constants.IDSizes.SMALL), nullable=True)
     user_email = Column(String(Constants.IDSizes.MEDIUM), nullable=False)
     user_profile_picture = Column(String(Constants.IDSizes.XLARGE), nullable=True)
     transactions_sync_cursor = Column(String(Constants.IDSizes.LARGE), nullable=True)
     last_transactions_account_sync = Column(DateTime, nullable=True)
+
+    # encrypted data
+    access_key = Column(LargeBinary(), nullable=True)
+    user_key = Column(LargeBinary(), nullable=True)
 
     # one to many
     accounts = relationship('Account', backref='user', lazy='select', cascade='all, delete-orphan')

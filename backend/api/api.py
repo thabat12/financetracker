@@ -12,10 +12,10 @@ from pydantic import BaseModel
 
 
 from db.models import *
-from batch.routes.auth import auth_router
-from batch.routes.plaid import plaid_router
-from batch.routes.data import data_router
-from batch.config import async_database_engine, settings, yield_db
+from api.routes.auth import auth_router
+from api.routes.plaid import plaid_router
+from api.routes.data import data_router
+from api.config import async_database_engine, settings, yield_db
 
 
 @asynccontextmanager
