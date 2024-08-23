@@ -73,10 +73,16 @@ def decrypt_integer(encrypted_bytes: bytearray, key: bytearray):
     d = decrypt_data(encrypted_bytes, key)
     return struct.unpack('!i', d)[0]
 
-def encrypt_float(float: float, key: bytearray):
+def encrypt_float(float: float | None, key: bytearray):
+    if float == None:
+        return None
+    
     b = struct.pack('!f', float)
     return encrypt_data(b, key)
 
-def decrypt_float(encrypted_bytes: bytearray, key: bytearray):
+def decrypt_float(encrypted_bytes: bytearray | None, key: bytearray):
+    if encrypted_bytes == None:
+        return None
+    
     d = decrypt_data(encrypted_bytes, key)
-    return struct.unpack('!f', d)[0]
+    return round(struct.unpack('!f', d)[0], 2)

@@ -9,7 +9,7 @@ import json
 
 from api.config import Session, settings, logger
 from api.routes.auth import verify_token
-from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data
+from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data, encrypt_float, decrypt_float
 from db.models import *
 
 
@@ -41,7 +41,7 @@ class PlaidRefreshAccountsResponse(BaseModel):
     returns a list of list of plaid account: new, updated, deleted
 
 '''
-async def plaid_refresh_accounts(user_id: str, user_access_key: str) -> List[List[PlaidAccount]]:
+async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: bytes) -> List[List[PlaidAccount]]:
     logger.info('/data/plaid_refresh_accounts')
     async with httpx.AsyncClient() as client:
         client: httpx.AsyncClient
@@ -108,11 +108,11 @@ async def plaid_refresh_accounts(user_id: str, user_access_key: str) -> List[Lis
                         update(Account)
                         .values(
                             balance_available=case(
-                                {account.account_id: account.balances.available for account in updated_accounts},
+                                {account.account_id: encrypt_float(account.balances.available, user_key) for account in updated_accounts},
                                 value=Account.account_id
                             ),
                             balance_current=case(
-                                {account.account_id: account.balances.current for account in updated_accounts},
+                                {account.account_id: encrypt_float(account.balances.current, user_key) for account in updated_accounts},
                                 value=Account.account_id
                             ),
                             update_status=case(
@@ -131,11 +131,11 @@ async def plaid_refresh_accounts(user_id: str, user_access_key: str) -> List[Lis
                     session.add_all([
                         Account(
                             account_id = new_account.account_id,
-                            balance_available = new_account.balances.available,
-                            balance_current = new_account.balances.current,
+                            balance_available = encrypt_float(new_account.balances.available, user_key),
+                            balance_current = encrypt_float(new_account.balances.current, user_key),
                             iso_currency_code = new_account.balances.iso_currency_code,
-                            account_name = new_account.name,
-                            account_type = new_account.type,
+                            account_name = encrypt_data(bytes(new_account.name, encoding='utf-8'), user_key),
+                            account_type = encrypt_data(bytes(new_account.type, encoding='utf-8'), user_key),
                             user_id = user_id,
                             update_status = 'added',
                             update_status_date = now
@@ -199,7 +199,7 @@ class PlaidRefreshTransactionsResponse(BaseModel):
     returns a list of 3 elements of plaidtransaction objects: added, modified, removed
 
 '''
-async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List[PlaidTransaction]:
+async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_key: bytes) -> List[PlaidTransaction]:
     logger.info('/data/plaid_refresh_transactions')
     transaction_hash = hash(f'plaid_refresh_transactions:{user_id}') & 0x7fffffffffffffff
 
@@ -243,7 +243,7 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
                     resp = resp.json()
 
                     print('THE DATA')
-                    print(json.dumps(resp, indent=4, sort_keys=True))
+                    # print(json.dumps(resp, indent=4, sort_keys=True))
 
                     added.extend(list(map(lambda r: PlaidTransaction(**r), resp['added'])))
                     modified.extend(list(map(lambda r: PlaidTransaction(**r), resp['modified'])))
@@ -279,11 +279,11 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
                 session.add(
                     Transaction(
                         transaction_id = added_transaction.transaction_id,
-                        name = added_transaction.name,
+                        name = encrypt_data(bytes(added_transaction.name, encoding='utf-8'), user_key),
                         is_pending = added_transaction.pending,
-                        amount = added_transaction.amount,
+                        amount = encrypt_float(added_transaction.amount, user_key),
                         authorized_date = datetime.strptime(added_transaction.authorized_date, '%Y-%m-%d') if added_transaction.authorized_date else None,
-                        personal_finance_category = added_transaction.personal_finance_category.primary,
+                        personal_finance_category = encrypt_data(bytes(added_transaction.personal_finance_category.primary, encoding='utf-8'), user_key),
                         user_id = user_id,
                         account_id = added_transaction.account_id,
                         merchant_id = added_transaction.merchant_entity_id if added_transaction.merchant_entity_id is not None else None,
@@ -306,14 +306,14 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
                     current_merchants_indb.add(modified_transaction.merchant_entity_id)
                     
                 smt = update(Transaction).where(Transaction.transaction_id == modified_transaction.transaction_id).values({
-                    'amount': added_transaction.amount,
+                    'amount': encrypt_float(added_transaction.amount, user_key),
                     'authorized_date': datetime.strptime(added_transaction.authorized_date, '%Y-%m-%d') if added_transaction.authorized_date else None,
-                    'personal_finance_category': added_transaction.personal_finance_category.primary,
+                    'personal_finance_category': encrypt_data(bytes(added_transaction.personal_finance_category.primary, encoding='utf-8'), user_key),
                     'user_id': user_id,
                     'account_id': added_transaction.account_id,
                     'merchant_id': added_transaction.merchant_entity_id,
                     'is_pending': added_transaction.pending,
-                    'name': added_transaction.name
+                    'name': encrypt_data(bytes(added_transaction.name, encoding='utf-8'), user_key)
                 })
 
                 await session.execute(smt)
@@ -332,11 +332,11 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str) -> List
             logger.info(f'/data/plaid_refresh_transactions: {user_id} transaction modifications set')
             return PlaidRefreshTransactionsResponse(added=added, modified=modified, removed=removed)
 
-async def plaid_refresh_user_account_data(user_id, user_access_key):
+async def plaid_refresh_user_account_data(user_id, user_access_key, user_key):
     logger.info('/data/plaid_refresh_user_account_data')
     try:
-        await plaid_refresh_accounts(user_id=user_id, user_access_key=user_access_key)
-        await plaid_refresh_transactions(user_id=user_id, user_access_key=user_access_key)
+        await plaid_refresh_accounts(user_id=user_id, user_access_key=user_access_key, user_key=user_key)
+        await plaid_refresh_transactions(user_id=user_id, user_access_key=user_access_key, user_key=user_key)
         logger.info(f'/data/plaid_refresh_user_account_data: {user_id} refreshed all account and transaction data')
 
         # upon successful 
@@ -349,7 +349,6 @@ async def plaid_refresh_user_account_data(user_id, user_access_key):
                 await session.commit()
     except Exception as e:
         raise e
-
 
 class DBGetTransactionsEnum(Enum):
     TRANSACTIONS = 1
@@ -374,13 +373,12 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
 
             user_key = decrypt_data(cur_user.user_key, db_key_bytes)
             user_access_key = decrypt_data(cur_user.access_key, user_key).decode('utf-8')
-            logger.info(f'THIS IS THE USER ACCESS KEY: {user_access_key}')
 
 
     # necessary account + transaction data refresh
     if cur_user.last_transactions_account_sync is None or cur_user.last_transactions_account_sync.day < datetime.now().day:
         logger.info(f'/data/db_get_transactions: {user_id} must sync with transactions! refreshing transactions data...')
-        await plaid_refresh_user_account_data(user_id=user_id, user_access_key=user_access_key)
+        await plaid_refresh_user_account_data(user_id=user_id, user_access_key=user_access_key, user_key=user_key)
     
     # get all the transactions
     async with Session() as session:
@@ -397,8 +395,20 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
                 merchant_ids: List[str] = []
 
                 for transaction in all_transactions:
+                    # handle data decryption manually here
                     transaction: Transaction
-                    transactions.append(PTransaction.model_validate(transaction))
+                    transactions.append(PTransaction(
+                        transaction_id=transaction.transaction_id,
+                        name=decrypt_data(transaction.name, user_key).decode('utf-8'),
+                        amount=decrypt_float(transaction.amount, user_key),
+                        authorized_date=transaction.authorized_date,
+                        personal_finance_category=decrypt_data(transaction.personal_finance_category, user_key).decode('utf-8'),
+                        update_status=transaction.update_status,
+                        update_status_date=transaction.update_status_date,
+                        user_id=transaction.user_id,
+                        account_id=transaction.account_id,
+                        merchant_id=transaction.merchant_id
+                    ))
                     merchant_ids.append(transaction.merchant_id)
 
                 all_merchants = await session.scalars(select(Merchant).where(Merchant.merchant_id.in_(merchant_ids)))
@@ -422,8 +432,18 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
 
                 for account in all_accounts:
                     account: Account
+                    # manually decrypting the account data
                     accounts.append(
-                        PAccount.model_validate(account)
+                        PAccount(
+                            account_id=account.account_id,
+                            balance_available=decrypt_float(account.balance_available, user_key),
+                            balance_current=decrypt_float(account.balance_current, user_key),
+                            iso_currency_code=account.iso_currency_code,
+                            account_name=decrypt_data(account.account_name, user_key).decode('utf-8'),
+                            account_type=decrypt_data(account.account_type, user_key).decode('utf-8'),
+                            update_status=account.update_status,
+                            update_status_date=account.update_status_date
+                        )
                     )
 
                 accounts_resp: DBGetTransactionsResponseAccounts = DBGetTransactionsResponseAccounts(accounts=accounts)

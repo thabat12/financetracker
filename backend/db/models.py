@@ -60,11 +60,11 @@ class Account(Base):
     # note: use Plaid's persistent_account_id to populate this
     account_id = Column(String(Constants.IDSizes.MEDIUM), primary_key=True, nullable=False)
 
-    balance_available = Column(Float, nullable=True)
-    balance_current = Column(Float, nullable=True)
+    balance_available = Column(LargeBinary, nullable=True)
+    balance_current = Column(LargeBinary, nullable=True)
     iso_currency_code = Column(String(Constants.IDSizes.SMALL), nullable=True)
-    account_name = Column(String(Constants.IDSizes.LARGE), nullable=True)
-    account_type = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    account_name = Column(LargeBinary, nullable=True)
+    account_type = Column(LargeBinary, nullable=True)
     update_status = Column(String(Constants.IDSizes.SMALL), nullable=True)
     update_status_date = Column(DateTime, nullable=True)
 
@@ -92,11 +92,11 @@ class Transaction(Base):
     __tablename__ = 'transaction'
     transaction_id = Column(String(Constants.IDSizes.MEDIUM), primary_key=True, \
                                nullable=False)
-    name = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+    name = Column(LargeBinary, nullable=True)
     is_pending = Column(Boolean, nullable=True)
-    amount = Column(Float, nullable=False)
+    amount = Column(LargeBinary, nullable=False)
     authorized_date = Column(DateTime, nullable=True)
-    personal_finance_category = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+    personal_finance_category = Column(LargeBinary, nullable=True)
     update_status = Column(String(Constants.IDSizes.SMALL), nullable=True)
     update_status_date = Column(DateTime, nullable=True)
 
@@ -166,6 +166,7 @@ class PMerchant(PORM):
 
 class PTransaction(PORM):
     transaction_id: str
+    name: Optional[str] = None
     amount: float
     authorized_date: Optional[datetime] = None
     personal_finance_category: Optional[str] = None
