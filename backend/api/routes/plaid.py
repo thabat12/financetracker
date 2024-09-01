@@ -153,6 +153,7 @@ async def db_update_institution_details(institution_id: str):
                 name=institution_name,
                 supports_transactions='transactions' in supported_products,
                 supports_auth='auth' in supported_products,
+                supports_investments='investments' in supported_products,
                 logo=institution_logo,
                 url=institution_url
             )

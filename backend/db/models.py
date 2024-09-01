@@ -27,8 +27,6 @@ class User(Base):
     user_last_name = Column(String(Constants.IDSizes.SMALL), nullable=True)
     user_email = Column(String(Constants.IDSizes.MEDIUM), nullable=False)
     user_profile_picture = Column(String(Constants.IDSizes.XLARGE), nullable=True)
-    transactions_sync_cursor = Column(String(Constants.IDSizes.LARGE), nullable=True)
-    last_transactions_account_sync = Column(DateTime, nullable=True)
 
     # encrypted data
     user_key = Column(LargeBinary(), nullable=True)
@@ -51,9 +49,10 @@ class GoogleUser(Base):
 class Institution(Base):
     __tablename__ = 'institution'
     institution_id = Column(String(Constants.IDSizes.MEDIUM), primary_key=True) # todo: figure out the best length for this id
-    name = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    name = Column(Text, nullable=True)
     supports_transactions = Column(Boolean, nullable=True)
     supports_auth = Column(Boolean, nullable=True)
+    supports_investments = Column(Boolean, nullable=True)
     logo = Column(Text, nullable=True)
     url = Column(Text, nullable=True)
 
@@ -62,6 +61,8 @@ class AccessKey(Base):
     # stored as <usr_id>:/:/:<ins_id>
     access_key_id = Column(String(Constants.IDSizes.LARGE), primary_key=True)
     access_key = Column(LargeBinary, nullable=False) # encrypted via the user key
+    transactions_sync_cursor = Column(String(Constants.IDSizes.LARGE), nullable=True)
+    last_transactions_account_sync = Column(DateTime, nullable=True)
 
     # one(User) -> many(AccessKey)
     user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), nullable=False)
@@ -135,7 +136,19 @@ class Transaction(Base):
     
     # TODO
     institution_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Institution.__tablename__}.institution_id'), nullable=True)
-    
+
+class InvestmentHolding(Base):
+    __tablename__ = 'investment_holding'
+    investment_holding_id = Column(String(Constants.IDSizes.LARGE), primary_key=True)
+    name = Column(String(Constants.IDSizes.LARGE), nullable=True)
+    amount = Column(LargeBinary, nullable=True)
+    date = Column(LargeBinary, nullable=True)
+
+
+    # relationships
+    account_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Account.__tablename__}.account_id'), nullable=True)
+
+
 class Subscription(Base):
     __tablename__ = 'subscription'
     subscription_id = Column(Integer, primary_key=True, nullable=False)
