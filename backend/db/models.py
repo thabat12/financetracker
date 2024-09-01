@@ -37,6 +37,7 @@ class User(Base):
     subscriptions = relationship('Subscription', backref='user', lazy='select', cascade='all, delete-orphan')
     auth_sessions = relationship('AuthSession', backref='user', lazy='select', cascade='all, delete-orphan')
     access_keys = relationship('AccessKey', backref='user', lazy='select', cascade='all, delete-orphan')
+    investment_holdings = relationship('InvestmentHolding', backref='user', lazy='select', cascade='all, delete-orphan')
 
 class GoogleUser(Base):
     __tablename__ = 'google_user'
@@ -139,15 +140,23 @@ class Transaction(Base):
 
 class InvestmentHolding(Base):
     __tablename__ = 'investment_holding'
+
     investment_holding_id = Column(String(Constants.IDSizes.LARGE), primary_key=True)
-    name = Column(String(Constants.IDSizes.LARGE), nullable=True)
-    amount = Column(LargeBinary, nullable=True)
-    date = Column(LargeBinary, nullable=True)
-
-
+    name = Column(LargeBinary, nullable=True)
+    ticker = Column(LargeBinary, nullable=True)
+    cost_basis = Column(LargeBinary, nullable=True)
+    institution_price = Column(Float, nullable=True)
+    institution_price_as_of = Column(DateTime, nullable=True)
+    institution_value = Column(Float, nullable=True)
+    iso_currency_code = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    quantity = Column(LargeBinary, nullable=True)
+    unofficial_currency_code = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    vested_quantity = Column(LargeBinary, nullable=True)
+    vested_value = Column(LargeBinary, nullable=True)
+    
     # relationships
     account_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Account.__tablename__}.account_id'), nullable=True)
-
+    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), nullable=True)
 
 class Subscription(Base):
     __tablename__ = 'subscription'
