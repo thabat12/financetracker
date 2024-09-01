@@ -41,16 +41,10 @@ class PlaidRefreshAccountsResponse(BaseModel):
     returns a list of list of plaid account: new, updated, deleted
 
 '''
-async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: bytes) -> List[List[PlaidAccount]]:
+async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: bytes, institution_id: str = None) -> List[List[PlaidAccount]]:
     logger.info('/data/plaid_refresh_accounts')
     async with httpx.AsyncClient() as client:
         client: httpx.AsyncClient
-
-        print({
-                'client_id': settings.test_plaid_client_id,
-                'secret': settings.plaid_secret,
-                'access_token': user_access_key
-            })
         
         resp = await client.post(
             f'{settings.test_plaid_url}/auth/get',
@@ -138,7 +132,8 @@ async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: b
                             account_type = encrypt_data(bytes(new_account.type, encoding='utf-8'), user_key),
                             user_id = user_id,
                             update_status = 'added',
-                            update_status_date = now
+                            update_status_date = now,
+                            institution_id=institution_id
                         ) for new_account in new_accounts
                     ])
 
@@ -199,7 +194,7 @@ class PlaidRefreshTransactionsResponse(BaseModel):
     returns a list of 3 elements of plaidtransaction objects: added, modified, removed
 
 '''
-async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_key: bytes) -> List[PlaidTransaction]:
+async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_key: bytes, institution_id: str) -> List[PlaidTransaction]:
     logger.info('/data/plaid_refresh_transactions')
     transaction_hash = hash(f'plaid_refresh_transactions:{user_id}') & 0x7fffffffffffffff
 
@@ -275,7 +270,7 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_ke
                                               merchant_name = added_transaction.merchant_name, \
                                               merchant_logo = added_transaction.logo_url))
                     current_merchants_indb.add(added_transaction.merchant_entity_id)
-                    
+
                 session.add(
                     Transaction(
                         transaction_id = added_transaction.transaction_id,
@@ -288,7 +283,8 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_ke
                         account_id = added_transaction.account_id,
                         merchant_id = added_transaction.merchant_entity_id if added_transaction.merchant_entity_id is not None else None,
                         update_status = 'added',
-                        update_status_date = now
+                        update_status_date = now,
+                        institution_id = institution_id
                     )
                 )
 
@@ -332,12 +328,51 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_ke
             logger.info(f'/data/plaid_refresh_transactions: {user_id} transaction modifications set')
             return PlaidRefreshTransactionsResponse(added=added, modified=modified, removed=removed)
 
-async def plaid_refresh_user_account_data(user_id, user_access_key, user_key):
+async def plaid_refresh_user_account_data(user_id: str, user_key: bytes):
     logger.info('/data/plaid_refresh_user_account_data')
+
+    # get all the accounts associated with the current user
+    async with Session() as session:
+        async with session.begin():
+            logger.info(f'/data/plaid_refresh_user_account_data: selecting all access keys that are associated with the user')
+            smt = select(AccessKey).where(AccessKey.user_id == user_id)
+
+            access_keys = await session.execute(smt)
+            access_keys = access_keys.scalars().all()
+
+            if not access_keys:
+                logger.error(f'/data/plaid_refresh_user_account_data: {user_id} this endpoint is called without any access keys??')
+                raise HTTPException(detail='User has no access keys but the plaid_refresh_user_account_data endpoint is\n' + \
+                                        'somehow called!', status_code=500)
+
+            logger.info(f'/data/plaid_refresh_user_account_data: {user_id} definitely has some access keys so let us process them!')
+
+            print(access_keys, 'is all the access keys')
+            print(access_keys[0], 'is the first one lol')
+            all_user_institutions = [i.access_key_id.split(':/:/:')[-1].strip() for i in access_keys]
+            smt = select(Institution).where(Institution.institution_id.in_(all_user_institutions))
+
+            logger.info(f'/data/plaid_refresh_user_account_data: {user_id} getting all the institution data metadata for user')
+            all_institution_data = await session.execute(smt)
+            all_institution_data = all_institution_data.scalars().all()
+            all_institution_data = { i.institution_id: i for i in all_institution_data }
+
     try:
-        await plaid_refresh_accounts(user_id=user_id, user_access_key=user_access_key, user_key=user_key)
-        await plaid_refresh_transactions(user_id=user_id, user_access_key=user_access_key, user_key=user_key)
-        logger.info(f'/data/plaid_refresh_user_account_data: {user_id} refreshed all account and transaction data')
+        logger.info(f'/data/plaid_refresh_user_account_data: {user_id} setting up iteration through all access keys and associated institutions')
+        # refresh the user data for every access key that has institution data support
+        for cur_institution, access_key_record in zip(all_user_institutions, access_keys):
+            access_key_record: AccessKey
+
+            user_access_key = decrypt_data(access_key_record.access_key, user_key).decode('utf-8')
+            cur_institution_data: Institution = all_institution_data[cur_institution]
+
+            if cur_institution_data.supports_auth:
+                logger.info(f'/data/plaid_refresh_user_account_data: {user_id} institution {cur_institution} supports auth!')
+                await plaid_refresh_accounts(user_id=user_id, user_access_key=user_access_key, user_key=user_key, institution_id=cur_institution)
+            if cur_institution_data.supports_transactions:
+                logger.info(f'/data/plaid_refresh_user_account_data: {user_id} institution {cur_institution} supports transactions!')
+                await plaid_refresh_transactions(user_id=user_id, user_access_key=user_access_key, user_key=user_key, institution_id=cur_institution)
+        logger.info(f'/data/plaid_refresh_user_account_data: {user_id} refreshed account and transaction data')
 
         # upon successful 
         async with Session() as session:
@@ -372,13 +407,11 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
             cur_user: User = await session.get(User, user_id)
 
             user_key = decrypt_data(cur_user.user_key, db_key_bytes)
-            user_access_key = decrypt_data(cur_user.access_key, user_key).decode('utf-8')
-
 
     # necessary account + transaction data refresh
     if cur_user.last_transactions_account_sync is None or cur_user.last_transactions_account_sync.day < datetime.now().day:
         logger.info(f'/data/db_get_transactions: {user_id} must sync with transactions! refreshing transactions data...')
-        await plaid_refresh_user_account_data(user_id=user_id, user_access_key=user_access_key, user_key=user_key)
+        await plaid_refresh_user_account_data(user_id=user_id, user_key=user_key)
     
     # get all the transactions
     async with Session() as session:
@@ -407,7 +440,8 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
                         update_status_date=transaction.update_status_date,
                         user_id=transaction.user_id,
                         account_id=transaction.account_id,
-                        merchant_id=transaction.merchant_id
+                        merchant_id=transaction.merchant_id,
+                        institution_id=transaction.institution_id
                     ))
                     merchant_ids.append(transaction.merchant_id)
 
@@ -442,9 +476,11 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
                             account_name=decrypt_data(account.account_name, user_key).decode('utf-8'),
                             account_type=decrypt_data(account.account_type, user_key).decode('utf-8'),
                             update_status=account.update_status,
-                            update_status_date=account.update_status_date
+                            update_status_date=account.update_status_date,
+                            institution_id=account.institution_id
                         )
                     )
+                logger.info(f'/data/db_get_transactions: {user_id} all accounts information filled in!')
 
                 accounts_resp: DBGetTransactionsResponseAccounts = DBGetTransactionsResponseAccounts(accounts=accounts)
 
@@ -481,8 +517,16 @@ async def get_transactions(authorization: str = Header(...)) -> GetTransactionsR
     logger.info(f'/data/get_transactions: the data returned!')
     return transactions
 
+class GetAccountsResponseEnum(Enum):
+    SUCCESS = 'success'
+    INVALID_AUTH = 'invalid_auth'
+
+class GetAccountsResponse(BaseModel):
+    message: GetAccountsResponseEnum
+    accounts: List[PAccount]
+
 @data_router.post('/get_accounts')
-async def get_accounts(authorization: str = Header(...)):
+async def get_accounts(authorization: str = Header(...)) -> GetAccountsResponse:
     token = authorization.strip().split(' ')[-1].strip()
 
     res: bool
@@ -493,6 +537,6 @@ async def get_accounts(authorization: str = Header(...)):
         raise HTTPException(status_code=500, detail='User session is invalid!')
     
     if res:
-        accounts = await db_get_transactions(user_id=cur_user, data_type=DBGetTransactionsEnum.ACCOUNTS)
+        accounts: DBGetTransactionsResponse = await db_get_transactions(user_id=cur_user, data_type=DBGetTransactionsEnum.ACCOUNTS)
 
-    return accounts.accounts
+    return GetAccountsResponse(message=GetAccountsResponseEnum.SUCCESS, accounts=accounts.accounts.accounts)

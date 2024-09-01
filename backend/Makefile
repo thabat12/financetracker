@@ -25,3 +25,7 @@ clear_db_cache:
 	@mkdir ./alembic/versions
 	@python -m db.reset_alembic
 	@echo "Alembic version directory cleared and version table reset."
+
+# clearing all data in the database
+clear_db:
+	@python -m db.init_db

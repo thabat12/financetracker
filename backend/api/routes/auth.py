@@ -106,7 +106,6 @@ async def create_account(new_user: CreateAccountRequest, link_id: str) -> Create
         is_verified=True,
         created_at=datetime.now(),
         last_login_at=datetime.now(),
-        access_key=None,
         user_first_name=new_user.first_name,
         user_last_name=new_user.last_name,
         user_email=new_user.user_email,
@@ -225,8 +224,13 @@ async def create_auth_session(user_id: str):
 
     return auth_token
 
+class LoginGoogleResponse(BaseModel):
+    authorization_token: str
+    user_id: str
+    account_status: str
+
 @auth_router.post('/login_google')
-async def login_google(request: LoginGoogleRequest):
+async def login_google(request: LoginGoogleRequest) -> LoginGoogleResponse:
     logger.info('auth/login_google')
     async with httpx.AsyncClient() as client:
         logger.info(f'auth/login_google: requesting google to validate access token')
@@ -236,14 +240,14 @@ async def login_google(request: LoginGoogleRequest):
 
         if user_info.error is not None:
             logger.error('auth/login_google: invalid access token provided')
-            raise HTTPException(status_code=500, detail='Access Token Provided is Invalid!')
+            raise HTTPException(status_code=401, detail='Access Token Provided is Invalid!')
         else:
             logger.info('auth/login_google: logging into google...')
             result: LoginGoogleReturn = await login_google_db_operation(user_info=user_info)
             auth_token = await create_auth_session(result.user_id)
     
-    return {
+    return LoginGoogleResponse.model_validate({
         'authorization_token': auth_token,
         'user_id': result.user_id,
         'account_status': result.message
-    }
+    })

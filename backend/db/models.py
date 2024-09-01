@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean, LargeBinary
+from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean, LargeBinary, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -31,7 +31,6 @@ class User(Base):
     last_transactions_account_sync = Column(DateTime, nullable=True)
 
     # encrypted data
-    access_key = Column(LargeBinary(), nullable=True)
     user_key = Column(LargeBinary(), nullable=True)
 
     # one to many
@@ -39,6 +38,7 @@ class User(Base):
     transactions = relationship('Transaction', backref='user', lazy='select', cascade='all, delete-orphan')
     subscriptions = relationship('Subscription', backref='user', lazy='select', cascade='all, delete-orphan')
     auth_sessions = relationship('AuthSession', backref='user', lazy='select', cascade='all, delete-orphan')
+    access_keys = relationship('AccessKey', backref='user', lazy='select', cascade='all, delete-orphan')
 
 class GoogleUser(Base):
     __tablename__ = 'google_user'
@@ -47,6 +47,24 @@ class GoogleUser(Base):
     
     # one to one
     user = relationship('User', backref='google_user', uselist=False)
+
+class Institution(Base):
+    __tablename__ = 'institution'
+    institution_id = Column(String(Constants.IDSizes.MEDIUM), primary_key=True) # todo: figure out the best length for this id
+    name = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    supports_transactions = Column(Boolean, nullable=True)
+    supports_auth = Column(Boolean, nullable=True)
+    logo = Column(Text, nullable=True)
+    url = Column(Text, nullable=True)
+
+class AccessKey(Base):
+    __tablename__ = 'access_key'
+    # stored as <usr_id>:/:/:<ins_id>
+    access_key_id = Column(String(Constants.IDSizes.LARGE), primary_key=True)
+    access_key = Column(LargeBinary, nullable=False) # encrypted via the user key
+
+    # one(User) -> many(AccessKey)
+    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), nullable=False)
 
 class AuthSession(Base):
     __tablename__ = 'auth_session'
@@ -73,6 +91,9 @@ class Account(Base):
 
     # one (User) -> many (Account)
     user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), nullable=False)
+
+    # i dont really know what this relationship is
+    institution_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Institution.__tablename__}.institution_id'), nullable=True)
     
     def __repr__(self) -> str:
         return f'{self.account_id}: {self.account_name}'
@@ -111,6 +132,9 @@ class Transaction(Base):
     # one (Merchant) -> many (Transaction)
     merchant_id = Column(String(Constants.IDSizes.MEDIUM), \
                             ForeignKey(f'{Merchant.__tablename__}.merchant_id'), nullable=True)
+    
+    # TODO
+    institution_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Institution.__tablename__}.institution_id'), nullable=True)
     
 class Subscription(Base):
     __tablename__ = 'subscription'
@@ -154,7 +178,7 @@ class PAccount(PORM):
     account_type: Optional[str] = None
     update_status: Optional[str] = None
     update_status_date: Optional[datetime] = None
-    user_id: str
+    institution_id: str
 
     class Config:
         orm_mode = True
@@ -177,6 +201,7 @@ class PTransaction(PORM):
     user_id: str
     account_id: str
     merchant_id: Optional[str] = None
+    institution_id: str
 
     class Config:
         orm_mode = True

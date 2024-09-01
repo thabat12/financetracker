@@ -69,7 +69,7 @@ function SplashPage() {
                     (err) => {
                         console.log(err);
                     }
-                )
+                );
             } else {
                 const script = document.createElement("script");
                 script.src = "https://accounts.google.com/gsi/client";
