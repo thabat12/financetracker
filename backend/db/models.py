@@ -52,7 +52,6 @@ class Institution(Base):
     institution_id = Column(String(Constants.IDSizes.MEDIUM), primary_key=True) # todo: figure out the best length for this id
     name = Column(Text, nullable=True)
     supports_transactions = Column(Boolean, nullable=True)
-    supports_auth = Column(Boolean, nullable=True)
     supports_investments = Column(Boolean, nullable=True)
     logo = Column(Text, nullable=True)
     url = Column(Text, nullable=True)

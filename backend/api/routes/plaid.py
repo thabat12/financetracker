@@ -76,13 +76,21 @@ async def plaid_exchange_public_token(user_id: str, public_token: str, instituti
 class GetPublicTokenRequest(BaseModel):
     user_id: str
 
-async def plaid_get_public_token(uuid: str, institution_id: str):
+async def plaid_get_public_token(uuid: str, institution_id: str, transactions: bool, investments: bool):
     logger.info('/plaid/plaid_get_public_token: called')
     async for dbsess in yield_db():
         async with dbsess.begin():
             public_token = None
             try:
-                async with httpx.AsyncClient() as client:
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    products = []
+                    if transactions:
+                        products.append('transactions')
+                    if investments:
+                        products.append('investments')
+
+                    logger.info(f'/plaid/plaid_get_public_token endpoint calling {institution_id} with products as: {products}')
+
                     logger.info('/plaid/plaid_get_public_token: calling plaid endpoint /sandbox/public_token/create')
                     resp = await client.post(f'{settings.test_plaid_url}/sandbox/public_token/create',
                                             headers={'Content-Type': 'application/json'},
@@ -90,7 +98,7 @@ async def plaid_get_public_token(uuid: str, institution_id: str):
                                                 'client_id': settings.test_plaid_client_id,
                                                 'secret': settings.plaid_secret,
                                                 'institution_id': institution_id,
-                                                'initial_products': ['transactions'],
+                                                'initial_products': products,
                                                 'options': {
                                                     'webhook': 'https://www.plaid.com/webhook'
                                                 }
@@ -98,8 +106,13 @@ async def plaid_get_public_token(uuid: str, institution_id: str):
                     resp = resp.json()
                     public_token = resp['public_token']
                     logger.info('/plaid/plaid_get_pubic_token: public token created')
+            except httpx.ReadTimeout as e:
+                logger.error('there is a read timeout!')
+                raise HTTPException(status_code=500, detail='Plaid Endpoint Read Timeout') from e
             except Exception as e:
+                print(e)
                 logger.error('/plaid/plaid_get_public_token: plaid endpoint request failed')
+                
                 raise HTTPException(status_code=500, detail='Plaid Endpoint Request Failed') from e
             
             return public_token
@@ -114,9 +127,9 @@ async def db_update_institution_details(institution_id: str):
             cur_institution = await session.get(Institution, institution_id)
 
             if cur_institution is not None:
-                logger.info(f'/plaid/db_update_institution_details: {institution_id} already exists inthe db! no need for update!')
+                logger.info(f'/plaid/db_update_institution_details: {institution_id} already exists in the db! no need for update!')
                 # !!! EARLY RETURN (bad practice but yeah)
-                return
+                return await session.get(Institution, institution_id)
             
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
@@ -152,7 +165,6 @@ async def db_update_institution_details(institution_id: str):
                 institution_id=institution_id,
                 name=institution_name,
                 supports_transactions='transactions' in supported_products,
-                supports_auth='auth' in supported_products,
                 supports_investments='investments' in supported_products,
                 logo=institution_logo,
                 url=institution_url
@@ -161,6 +173,7 @@ async def db_update_institution_details(institution_id: str):
             session.add(new_ins)
             await session.commit()
     logger.info(f'/plaid/db_update_institution_details: {institution_id} added to the database, and we are done!')
+    return new_ins
 
 class LinkAccountResponseEnum(Enum):
     SUCCESS = 'success'
@@ -174,7 +187,7 @@ class LinkAccountRequest(BaseModel):
     institution_id: str
 
 @plaid_router.post('/link_account')
-async def link_account(request: LinkAccountRequest, background_tasks: BackgroundTasks, authorization: str = Header(...)) -> LinkAccountResponse:
+async def link_account(request: LinkAccountRequest, authorization: str = Header(...)) -> LinkAccountResponse:
     logger.info('/plaid/link_account: called')
     token = authorization.strip().split(' ')[-1].strip()
 
@@ -188,10 +201,11 @@ async def link_account(request: LinkAccountRequest, background_tasks: Background
     institution_id = request.institution_id
 
     logger.info(f'/plaid/link_account: registering background task to update institution id data for {institution_id}')
-    background_tasks.add_task(db_update_institution_details, institution_id)
+    ins_details: Institution = await db_update_institution_details(institution_id)
 
     logger.info(f'/plaid/link_account: {cur_user_id} public token is being generated')
-    public_token = await plaid_get_public_token(cur_user_id, institution_id)
+    public_token = await plaid_get_public_token(cur_user_id, institution_id, 
+                        ins_details.supports_transactions, ins_details.supports_investments)
     await plaid_exchange_public_token(cur_user_id, public_token, institution_id)
         
     return LinkAccountResponse(message=LinkAccountResponseEnum.SUCCESS)

@@ -41,6 +41,10 @@ const TransactionsPage = () => {
     return (
         <div>
             this is the transactions page
+            <br/>
+            <button 
+                onClick={() => {sessionStorage.removeItem("transactions");}}
+                className="flex font-bold p-2 bg-gray-100">Refresh</button>
             {transactions.map((value, index) => {
                 return (
                     <div key={String(index)} className="flex p-5 background">

@@ -41,13 +41,13 @@ class PlaidRefreshAccountsResponse(BaseModel):
     returns a list of list of plaid account: new, updated, deleted
 
 '''
-async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: bytes, institution_id: str = None) -> List[List[PlaidAccount]]:
+async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: bytes, institution_id: str = None) -> PlaidRefreshAccountsResponse:
     logger.info('/data/plaid_refresh_accounts')
     async with httpx.AsyncClient() as client:
         client: httpx.AsyncClient
         
         resp = await client.post(
-            f'{settings.test_plaid_url}/auth/get',
+            f'{settings.test_plaid_url}/accounts/get',
             headers={'Content-Type':'application/json'},
             json={
                 'client_id': settings.test_plaid_client_id,
@@ -56,8 +56,10 @@ async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: b
             }
         )
 
-        refreshed_account_data: List[PlaidAccount] = [PlaidAccount(**data) for data in resp.json()['accounts']]
+        all_data = resp.json()
+        # print(json.dumps(all_data, indent=4), 'is all the raw data!')
 
+        refreshed_account_data: List[PlaidAccount] = [PlaidAccount(**data) for data in all_data['accounts']]
 
     lock_key = hash(f'plaid_refresh_accounts:{user_id}') & 0x7fffffffffffffff
 
@@ -65,7 +67,6 @@ async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: b
         async with session.begin():
             try:
                 # this is a session-level lock
-                await session.execute(text(f'SELECT pg_advisory_xact_lock({lock_key});'))
 
                 smt = select(Account.account_id).where(Account.user_id == user_id)
                 existing_account_ids = await session.scalars(smt)
@@ -144,7 +145,6 @@ async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: b
                 await session.commit()
 
                 return PlaidRefreshAccountsResponse(new=new_accounts, updated=updated_accounts, deleted=deleted_accounts)
-            
             except Exception as e:
                 raise Exception('Database operation failed!', e)
                 
@@ -195,20 +195,24 @@ class PlaidRefreshTransactionsResponse(BaseModel):
     returns a list of 3 elements of plaidtransaction objects: added, modified, removed
 
 '''
-async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_key: bytes, institution_id: str, transactions_sync_cursor: str) -> List[PlaidTransaction]:
+async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_key: bytes, institution_id: str, access_key_id: str) -> List[PlaidTransaction]:
     logger.info('/data/plaid_refresh_transactions')
     transaction_hash = hash(f'plaid_refresh_transactions:{user_id}') & 0x7fffffffffffffff
 
     async with Session() as session:
         async with session.begin():
-            await session.execute(text(f'SELECT pg_advisory_xact_lock({transaction_hash});'))
+            await session.execute(text(f'SELECT pg_advisory_lock({transaction_hash});'))
+            logger.info(f'acquired the database lock for transactions: {transaction_hash}')
+            logger.info('/data/plaid_refresh_transactions: acquired database lock')
             # immediate employ a transaction lock on refresh_transactions
             user: User = await session.get(User, user_id)
+
 
             if not user:
                 raise Exception('Whats going on: the user', user_id, 'is invalid!')
 
-            cur_transactions_cursor: str | None = transactions_sync_cursor
+            access_key_record: AccessKey = await session.get(AccessKey, access_key_id)
+            cur_transactions_cursor: str | None = access_key_record.transactions_sync_cursor
 
             async with httpx.AsyncClient() as client:
 
@@ -239,7 +243,6 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_ke
                     resp = resp.json()
 
                     print('THE DATA')
-                    # print(json.dumps(resp, indent=4, sort_keys=True))
 
                     added.extend(list(map(lambda r: PlaidTransaction(**r), resp['added'])))
                     modified.extend(list(map(lambda r: PlaidTransaction(**r), resp['modified'])))
@@ -260,6 +263,10 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_ke
             
             # set the transactions sync cursor
             new_transactions_cursor = cur_transactions_cursor
+            logger.info(f'/data/plaid_refresh_transactions: adding the transactions sync cursor {new_transactions_cursor} to access key record')
+
+            access_key_record.transactions_sync_cursor = new_transactions_cursor
+            access_key_record.last_transactions_account_sync = now
 
             logger.info(f'/data/plaid_refresh_transactions: {user_id} adding {len(added)} transactions to database')
             for added_transaction in added:
@@ -324,9 +331,11 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_ke
                 smt = delete(Transaction).where(Transaction.transaction_id == removed_transaction.transaction_id)
                 await session.execute(smt)
 
+
             await session.commit()
 
             logger.info(f'/data/plaid_refresh_transactions: {user_id} transaction modifications set')
+            logger.info('/data/plaid_refresh_transactions: releasing database lock')
             return PlaidRefreshTransactionsResponse(added=added, modified=modified, removed=removed, new_transactions_cursor=new_transactions_cursor)
 
 async def plaid_refresh_user_account_data(user_id: str, user_key: bytes):
@@ -352,16 +361,15 @@ async def plaid_refresh_user_account_data(user_id: str, user_key: bytes):
             all_user_institutions = [i.access_key_id.split(':/:/:')[-1].strip() for i in access_keys]
             smt = select(Institution).where(Institution.institution_id.in_(all_user_institutions))
 
-            logger.info(f'/data/plaid_refresh_user_account_data: {user_id} getting all the institution data metadata for user')
             all_institution_data = await session.execute(smt)
             all_institution_data = all_institution_data.scalars().all()
+            logger.info(f'/data/plaid_refresh_user_account_data: {user_id} getting all the institution data metadata for user')
+            logger.info(f'the institution data gathered: {[i.name for i in all_institution_data]}')
             all_institution_data = { i.institution_id: i for i in all_institution_data }
 
     try:
         logger.info(f'/data/plaid_refresh_user_account_data: {user_id} setting up iteration through all access keys and associated institutions')
         # refresh the user data for every access key that has institution data support
-        updated_access_keys = []
-        updated_transaction_sync_cursors = []
         for cur_institution, access_key_record in zip(all_user_institutions, access_keys):
             access_key_record: AccessKey
 
@@ -372,42 +380,19 @@ async def plaid_refresh_user_account_data(user_id: str, user_key: bytes):
             user_access_key = decrypt_data(access_key_record.access_key, user_key).decode('utf-8')
             cur_institution_data: Institution = all_institution_data[cur_institution]
 
-            if cur_institution_data.supports_auth:
+            if cur_institution_data.supports_transactions:
+
                 logger.info(f'/data/plaid_refresh_user_account_data: {user_id} institution {cur_institution} supports auth!')
                 await plaid_refresh_accounts(user_id=user_id, user_access_key=user_access_key, user_key=user_key, institution_id=cur_institution)
-            if cur_institution_data.supports_transactions:
+
                 logger.info(f'/data/plaid_refresh_user_account_data: {user_id} institution {cur_institution} supports transactions!')
+                # within the refresh transaction, the sync cursor and the update time are both set
                 resp: PlaidRefreshTransactionsResponse = await plaid_refresh_transactions(user_id=user_id, user_access_key=user_access_key, 
                                                                                           user_key=user_key, institution_id=cur_institution, 
-                                                                                          transactions_sync_cursor=access_key_record.transactions_sync_cursor)
-
-            updated_access_keys.append(access_key_record.access_key_id)
-            updated_transaction_sync_cursors.append(resp.new_transactions_cursor)
+                                                                                          access_key_id=access_key_record.access_key_id)
 
         logger.info(f'/data/plaid_refresh_user_account_data: {user_id} refreshed account and transaction data')
 
-        # avoid updating anything related to the sync cursors if there is nothing to update
-        if not updated_access_keys:
-            return
-
-        # upon successful 
-        async with Session() as session:
-            async with session.begin():
-                logger.info(f'/data/plaid_refresh_user_account_data: {user_id} updating the access key items associated with user')
-
-                logger.info(f'/data/plaid_refresh_user_account_data: {user_id} the updated access keys are {updated_access_keys} and the sync cursors are {updated_transaction_sync_cursors}')
-
-                smt = update(AccessKey).values(
-                    last_transactions_account_sync=case(
-                        {akid: datetime.now() for akid in updated_access_keys},
-                        value=AccessKey.access_key_id
-                    ),
-                    transactions_sync_cursor=case(
-                        {akid: cursor for akid, cursor in zip(updated_access_keys, updated_transaction_sync_cursors)},
-                        value=AccessKey.access_key_id
-                    )
-                ).where(AccessKey.user_id == user_id)
-                await session.execute(smt)
     except Exception as e:
         raise e
 

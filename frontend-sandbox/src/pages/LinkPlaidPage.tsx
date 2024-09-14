@@ -27,13 +27,22 @@ function LinkPlaidPage() {
         const institutionSet = new Set<string>();
         const iData: Array<any> = [];
 
-        [...transactionInstitutions, ...investmentInstitutions].forEach(
+        transactionInstitutions.forEach(
             (elem) => {
                 if (! institutionSet.has(elem.institution_id)) {
-                    iData.push(elem);
+                    iData.push( {...elem, 'isTransaction': true} )
                 }
             }
         );
+
+        investmentInstitutions.forEach(
+            (elem) => {
+                if (! institutionSet.has(elem.institution_id)) {
+                    iData.push( {...elem, 'isTransaction': false} )
+                }
+            }
+        );
+
         sessionStorage.setItem("institutionData", JSON.stringify(iData));
         setInstitutionData(iData);
     }
@@ -64,7 +73,7 @@ function LinkPlaidPage() {
 
         axios.post(`http://localhost:8000/plaid/link_account`, 
             {
-                institution_id: 'ins_109508'
+                institution_id: institutionSelected
             }, 
             {
                 headers: {
@@ -94,18 +103,18 @@ function LinkPlaidPage() {
             <select
                 id="exampleDropdown"
                 value={institutionSelected}
-                onChange={(e) => {setInstitutionSelected(e.target.id)}}
+                onChange={(e) => {setInstitutionSelected(e.target.value);}}
             >
-                <option value="" disabled>Select an option</option>
+                <option id="" value="" disabled>Select an option</option>
                 {
                     institutionData !== undefined ?
                     institutionData.map(
                         (elem) => {
                             return (
-                                <option key={renderId++} id={elem.institution_id}>{elem.name}{
-                                    elem.products.includes("transactions") ? `-(transactions)` : ""
+                                <option key={renderId++} id={elem.institution_id} value={elem.institution_id}>{elem.name}{
+                                    (elem.isTransaction == true) ? `-(transactions)` : ""
                                 } {
-                                    elem.products.includes("investments") ? "-(investments)" : ""
+                                    (elem.isTransaction == false) ? "-(investments)" : ""
                                 }
                                 </option>
                             )

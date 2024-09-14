@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, update, delete, create_engine
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
+import asyncio
 
 
 from db.models import *
@@ -68,23 +69,54 @@ def refresh_database():
     temp_engine.dispose()
     return 'Database is refreshed!'
 
+
+async def get_institution_by_id(id: str):
+    data = None
+
+    async with httpx.AsyncClient() as client:
+        data = await client.post(f'{settings.test_plaid_url}/institutions/get_by_id',
+                                 headers={
+                                     'Content-Type': 'application/json'
+                                 },
+                                 json={
+                                     'institution_id': id,
+                                     'country_codes': ['US'],
+                                     'client_id': settings.test_plaid_client_id,
+                                     'secret': settings.plaid_secret
+                                 })
+        
+        data = data.json()
+
+    return data
+
+
 @app.get('/institution_data')
 async def institution_data(data_type: Optional[str] = 'transactions', limit: Optional[int] = 500, offset: Optional[int] = 0):
+    
     async with httpx.AsyncClient() as client:
-        data = await client.post(f'{settings.test_plaid_url}/institutions/get', 
-                          headers= {
-                              'Content-Type': 'application/json'
-                          },
-                          json= {
-                              'client_id': settings.test_plaid_client_id,
-                              'secret': settings.plaid_secret,
-                              'count': limit,
-                              'offset': offset,
-                              'country_codes': ['US'],
-                              'options': {
-                                  'products': [data_type]
-                              }
-                          })
-        data = data.json()
+        if data_type == 'investments':
+            institutions_supported = ['ins_13', 'ins_109508']
+            tasks = [asyncio.create_task(get_institution_by_id(cur_institution)) for cur_institution in institutions_supported]
+            data = {
+                'institutions': []
+            }
+            for result in await asyncio.gather(*tasks):
+                data['institutions'].append(result['institution'])
+        else:
+            data = await client.post(f'{settings.test_plaid_url}/institutions/get', 
+                            headers= {
+                                'Content-Type': 'application/json'
+                            },
+                            json= {
+                                'client_id': settings.test_plaid_client_id,
+                                'secret': settings.plaid_secret,
+                                'count': limit,
+                                'offset': offset,
+                                'country_codes': ['US'],
+                                'options': {
+                                    'products': [data_type]
+                                }
+                            })
+            data = data.json()
 
     return data
