@@ -6,3 +6,6 @@ asyncpg
 PyJWT
 redis
 cryptography
+pytest-asyncio
+pytest
+aiosqlite

@@ -29,3 +29,6 @@ clear_db_cache:
 # clearing all data in the database
 clear_db:
 	@python -m db.init_db
+
+test_api:
+	@python -m pytest

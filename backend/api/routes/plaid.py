@@ -1,16 +1,15 @@
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Header, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Header, Depends
 import httpx
 from enum import Enum
-from sqlalchemy import select, update
+from sqlalchemy import update
 
 from api.config import Session, settings, yield_db, logger
-from api.routes.auth import verify_token
+from api.api_utils.auth_util import verify_token
 from db.models import *
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data
 
 plaid_router = APIRouter()
-
 
 async def plaid_exchange_public_token(user_id: str, public_token: str, institution_id: str):
     logger.info('/plaid/plaid_exchange_public_token')
@@ -35,7 +34,6 @@ async def plaid_exchange_public_token(user_id: str, public_token: str, instituti
         logger.error('/plaid/plaid_exchange_public_token: plaid endpoint failed!')
         raise HTTPException(status_code=500, detail='Plaid Endpoint Failed!') from e
     
-
     try:
         async for dbsess in yield_db():
             async with dbsess.begin():
@@ -186,17 +184,9 @@ class LinkAccountResponse(BaseModel):
 class LinkAccountRequest(BaseModel):
     institution_id: str
 
-@plaid_router.post('/link_account')
-async def link_account(request: LinkAccountRequest, authorization: str = Header(...)) -> LinkAccountResponse:
+@plaid_router.post('/link_account', dependencies=[Depends(verify_token)])
+async def link_account(request: LinkAccountRequest) -> LinkAccountResponse:
     logger.info('/plaid/link_account: called')
-    token = authorization.strip().split(' ')[-1].strip()
-
-    # for every plaid endpoint, must verify the authentication token from now on
-    (res, cur_user_id) = await verify_token(token)
-
-    if not res:
-        logger.info(f'/plaid/link_account: {cur_user_id} auth_session is invalid')
-        return LinkAccountResponse(message=LinkAccountResponseEnum.INVALID_AUTH)
 
     institution_id = request.institution_id
 

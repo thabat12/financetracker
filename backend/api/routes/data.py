@@ -1,14 +1,14 @@
 from enum import Enum
+import asyncio
 from pydantic import BaseModel
 from logging import Logger
 from fastapi import APIRouter, HTTPException, Header, BackgroundTasks
 from sqlalchemy import select, update, case, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
-import json
 
 from api.config import Session, settings, logger
-from api.routes.auth import verify_token
+from api.api_utils.auth_util import verify_token
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data, encrypt_float, decrypt_float
 from db.models import *
 
@@ -202,6 +202,9 @@ async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_ke
     async with Session() as session:
         async with session.begin():
             await session.execute(text(f'SELECT pg_advisory_lock({transaction_hash});'))
+            print('sleeping for 5 seconds')
+            asyncio.sleep(5)
+            await session.execute(text(f'SELECT pg_advisory_unlock({transaction_hash});'))
             logger.info(f'acquired the database lock for transactions: {transaction_hash}')
             logger.info('/data/plaid_refresh_transactions: acquired database lock')
             # immediate employ a transaction lock on refresh_transactions

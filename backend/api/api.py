@@ -1,10 +1,11 @@
+
 import httpx
 import secrets
 import string
 from datetime import datetime
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select, update, delete, create_engine
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,18 +17,23 @@ from db.models import *
 from api.routes.auth import auth_router
 from api.routes.plaid import plaid_router
 from api.routes.data import data_router
-from api.config import async_database_engine, settings, yield_db
+from api.config import async_database_engine
+from api.config import settings
+from api.config import yield_db
+from api.config import set_global_session
+from api.config import Session
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # set up the session for context manager
+    set_global_session(Session)
     app.include_router(auth_router, prefix='/auth')
     app.include_router(plaid_router, prefix='/plaid')
     app.include_router(data_router, prefix='/data')
     yield
     await async_database_engine.dispose()
     
-
 app = FastAPI(lifespan=lifespan)
 
 allowed_origins = ["http://localhost", "http://localhost:3000"]
