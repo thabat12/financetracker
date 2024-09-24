@@ -1,201 +1,114 @@
-from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Header, Depends
-import httpx
-from enum import Enum
-from sqlalchemy import update
 
-from api.config import Session, settings, yield_db, logger
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from api.config import logger, yield_db
+from db.models import Institution
+from api.api_utils.plaid_util import LinkAccountRequest, LinkAccountResponse, LinkAccountResponseEnum
 from api.api_utils.auth_util import verify_token
-from db.models import *
-from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data
+from api.api_utils.plaid_util import db_update_institution_details, plaid_get_public_token, \
+                                    exchange_public_token, update_user_access_key
+
+
+'''
+    The plaid router file focuses on defining the view of dependencies and the flow of API execution 
+    for linking a user's financial institution account via Plaid. The database and API interaction 
+    logic are abstracted away, and the key focus here is the dependency tree. Each stage of dependency 
+    can be modified as needed for different use cases, just like the auth.py routes.
+
+    The dependencies are structured in the following way:
+
+        1. verify_token_dependency:
+            - Verifies the token of the current user logging in to ensure that the authentication 
+                process is successful. This is the leaf of the tree and must be working in order for
+                the rest of the logic to propagate in the endpoint call.
+            - **Expected Dependencies**: None
+
+        2. db_update_institution_details_dependency:
+            - Updates or fetches the financial institution details for the current user. This ensures 
+                that the selected institution is up to date in the database. This is important for
+                later operations that rely on the institution details to figure out specific product
+                categories that need updates.
+            - **Expected Dependencies**:
+                - `verify_token_dependency`: Ensures the user is authenticated before updating 
+                    institution details.
+            
+        3. plaid_get_public_token_dependency:
+            - Retrieves a public token for the user's selected institution using the Plaid API. This 
+                token is needed to initiate the account linking process.
+            - **Expected Dependencies**:
+                - `db_update_institution_details_dependency`: Ensures that institution details are 
+                    updated before retrieving the public token. The internal Plaid api call must read
+                    off of the supported institutions and the ins_id from this dependency.
+                - `verify_token_dependency`: Confirms the user is authenticated.
+
+        4. plaid_exchange_public_token_dependency:
+            - Exchanges the public token for an access token using Plaid's token exchange API. The 
+                access token is required for subsequent actions on the user's institution account.
+            - **Expected Dependencies**:
+                - `plaid_get_public_token_dependency`: Ensures that a valid public token has been 
+                    obtained before exchanging it for an access token.
+                - `verify_token_dependency`: Confirms the user is authenticated.
+
+        5. db_update_user_access_key_dependency:
+            - Stores the access token in the database, ensuring that the user's account details and 
+                access keys are securely saved and updated.
+            - **Expected Dependencies**:
+                - `plaid_exchange_public_token_dependency`: Retrieves the access token before 
+                    updating the database.
+                - `verify_token_dependency`: Ensures the user is authenticated.
+                - `db_update_institution_details_dependency`: Confirms that institution details are 
+                    current before updating the user's access key.
+        
+    Each of these dependencies is designed to be modular. For example, in a test case, you could 
+    replace `plaid_get_public_token_dependency` to avoid making an actual API call and return a mock 
+    token instead. Similarly, `db_update_institution_details_dependency` can be customized to work 
+    with test data for specific cases.
+'''
+
 
 plaid_router = APIRouter()
 
-async def plaid_exchange_public_token(user_id: str, public_token: str, institution_id: str):
-    logger.info('/plaid/plaid_exchange_public_token')
-    access_token = None
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f'{settings.test_plaid_url}/item/public_token/exchange',
-                headers={'Content-Type': 'application/json'},
-                json={
-                    'client_id': settings.test_plaid_client_id,
-                    'secret': settings.plaid_secret,
-                    'public_token': public_token
-                }
-            )
+async def verify_token_depdendency(cur_user: tuple[bool, str] = Depends(verify_token)) -> str:
+    logger.info(f"verify_token_dependency called for user: {cur_user[1]}")
+    return cur_user[1]
 
-            logger.info('/plaid/plaid_exchange_public_token: plaid endpoint /item/public_token/exchange called')
-
-            resp = resp.json()
-            access_token = resp['access_token']
-    except Exception as e:
-        logger.error('/plaid/plaid_exchange_public_token: plaid endpoint failed!')
-        raise HTTPException(status_code=500, detail='Plaid Endpoint Failed!') from e
+async def db_update_institution_details_dependency(
+        request: LinkAccountRequest, 
+        cur_user: str = Depends(verify_token_depdendency),
+        session: AsyncSession = Depends(yield_db) ) -> Institution:
     
-    try:
-        async for dbsess in yield_db():
-            async with dbsess.begin():
-                cur_user: User
-                cur_user = await dbsess.get(User, user_id)
-                if not cur_user:
-                    raise HTTPException(status_code=500, detail='Error linking!')
-                
-                logger.info(f'/plaid/plaid_exchange_public_token: {user_id} adding the new access key under AccessKey table')
-                # figure out if this user:institution exists in the table already
-                access_key_id = f'{cur_user.user_id}:/:/:{institution_id}'
-                cur_access_key = await dbsess.get(AccessKey, access_key_id)
-                user_key = decrypt_data(cur_user.user_key, db_key_bytes)
-
-                if not cur_access_key:
-                    logger.info(f'/plaid/plaid_exchange_public_token: {cur_user.user_id} creating new entry for current access key')
-                    a = AccessKey(
-                        access_key_id=access_key_id, 
-                        access_key=encrypt_data(bytes(access_token, encoding='utf-8'), user_key),
-                        user_id=cur_user.user_id               
-                    )
-                    dbsess.add(a)
-                    logger.info(f'/plaid/plaid_exchange_public_token: {cur_user.user_id} finished adding new access key entry to user')
-                else:
-                    logger.info(f'/plaid/plaid_exchange_public_token: {cur_user.user_id} updating the access key')
-                    await dbsess.execute(
-                        update(AccessKey).values(
-                            access_key=encrypt_data(bytes(access_token, encoding='utf-8'), user_key)
-                        ).where(AccessKey.access_key_id == access_key_id)
-                    )
-                    logger.info(f'/plaid/plaid_exchange_public_token: {cur_user.user_id} updated entry for access key to user')
-
-                await dbsess.commit()
-    except Exception as e:
-        print(e)
-        raise HTTPException(status_code=500, detail='Database Update Failed!') from e
-
-class GetPublicTokenRequest(BaseModel):
-    user_id: str
-
-async def plaid_get_public_token(uuid: str, institution_id: str, transactions: bool, investments: bool):
-    logger.info('/plaid/plaid_get_public_token: called')
-    async for dbsess in yield_db():
-        async with dbsess.begin():
-            public_token = None
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    products = []
-                    if transactions:
-                        products.append('transactions')
-                    if investments:
-                        products.append('investments')
-
-                    logger.info(f'/plaid/plaid_get_public_token endpoint calling {institution_id} with products as: {products}')
-
-                    logger.info('/plaid/plaid_get_public_token: calling plaid endpoint /sandbox/public_token/create')
-                    resp = await client.post(f'{settings.test_plaid_url}/sandbox/public_token/create',
-                                            headers={'Content-Type': 'application/json'},
-                                            json={
-                                                'client_id': settings.test_plaid_client_id,
-                                                'secret': settings.plaid_secret,
-                                                'institution_id': institution_id,
-                                                'initial_products': products,
-                                                'options': {
-                                                    'webhook': 'https://www.plaid.com/webhook'
-                                                }
-                                            })
-                    resp = resp.json()
-                    public_token = resp['public_token']
-                    logger.info('/plaid/plaid_get_pubic_token: public token created')
-            except httpx.ReadTimeout as e:
-                logger.error('there is a read timeout!')
-                raise HTTPException(status_code=500, detail='Plaid Endpoint Read Timeout') from e
-            except Exception as e:
-                print(e)
-                logger.error('/plaid/plaid_get_public_token: plaid endpoint request failed')
-                
-                raise HTTPException(status_code=500, detail='Plaid Endpoint Request Failed') from e
-            
-            return public_token
-    return None
-
-async def db_update_institution_details(institution_id: str):
-    logger.info('/plaid/db_update_institution_details')
-    async with Session() as session:
-        async with session.begin():
-            logger.info(f'/plaid/db_update_institution_details: checking to see if {institution_id} already exists in db or not')
-            # ensure that the institution_id doesn't already exist in the database
-            cur_institution = await session.get(Institution, institution_id)
-
-            if cur_institution is not None:
-                logger.info(f'/plaid/db_update_institution_details: {institution_id} already exists in the db! no need for update!')
-                # !!! EARLY RETURN (bad practice but yeah)
-                return await session.get(Institution, institution_id)
-            
-            async with httpx.AsyncClient() as client:
-                resp = await client.post(
-                    f'https://sandbox.plaid.com/institutions/get_by_id',
-                    headers={
-                        'Content-Type': 'application/json'
-                    },
-                    json={
-                        'institution_id': institution_id,
-                        'client_id': settings.test_plaid_client_id,
-                        'secret': settings.plaid_secret,
-                        'country_codes': ['US'],
-                        'options': {
-                            'include_optional_metadata': True
-                        }
-                    }
-                )
-
-                resp = resp.json()
-
-            if 'error_code' in resp:
-                logger.error(f'/plaid/db_update_institution_details: {institution_id} does not exist on Plaid!')
-                raise HTTPException(detail='Institution ID does not exist on Plaid\'s records!', status_code=500)
-            
-            logger.info(f'/plaid/db_update_institution_details: {institution_id} the plaid endpoint is called and data retrieved')
-            
-            supported_products = set(resp['institution']['products'])
-            institution_name = resp['institution']['name']
-            institution_logo = resp['institution']['logo']
-            institution_url = resp['institution']['url']
-
-            new_ins = Institution(
-                institution_id=institution_id,
-                name=institution_name,
-                supports_transactions='transactions' in supported_products,
-                supports_investments='investments' in supported_products,
-                logo=institution_logo,
-                url=institution_url
-            )
-
-            session.add(new_ins)
-            await session.commit()
-    logger.info(f'/plaid/db_update_institution_details: {institution_id} added to the database, and we are done!')
+    logger.info(f"db_update_institution_details_dependency called for user: {cur_user}, request: {request}")
+    new_ins: Institution = await db_update_institution_details(request=request, session=session)
     return new_ins
 
-class LinkAccountResponseEnum(Enum):
-    SUCCESS = 'success'
-    INVALID_AUTH = 'invalid_auth'
-    ALREADY_LINKED = 'already_linked'
+async def plaid_get_public_token_dependency(
+        ins_details: Institution = Depends(db_update_institution_details_dependency), 
+        cur_user: str = Depends(verify_token)) -> str:
+    
+    logger.info(f"plaid_get_public_token_dependency called for user: {cur_user}, institution: {ins_details.name}")
+    public_token: str = await plaid_get_public_token(ins_details=ins_details)
+    return public_token
 
-class LinkAccountResponse(BaseModel):
-    message: LinkAccountResponseEnum
+async def plaid_exchange_public_token_dependency(
+        public_token = Depends(plaid_get_public_token_dependency), 
+        cur_user = Depends(verify_token_depdendency)) -> LinkAccountResponse:
+    
+    logger.info(f"plaid_exchange_public_token_dependency called for user: {cur_user}, public token: {public_token}")
+    access_token = await exchange_public_token(public_token=public_token)
+    return access_token
 
-class LinkAccountRequest(BaseModel):
-    institution_id: str
+async def db_update_user_access_key_dependency(
+        access_key: str = Depends(plaid_exchange_public_token_dependency), 
+        cur_user: str = Depends(verify_token_depdendency),
+        ins_details: Institution = Depends(db_update_institution_details_dependency)) -> None:
+    
+    logger.info(f"db_update_user_access_key_dependency called for user: {cur_user}, institution: {ins_details.name}")
+    await update_user_access_key(access_key=access_key, cur_user=cur_user, ins_details=ins_details)
 
-@plaid_router.post('/link_account', dependencies=[Depends(verify_token)])
-async def link_account(request: LinkAccountRequest) -> LinkAccountResponse:
-    logger.info('/plaid/link_account: called')
-
-    institution_id = request.institution_id
-
-    logger.info(f'/plaid/link_account: registering background task to update institution id data for {institution_id}')
-    ins_details: Institution = await db_update_institution_details(institution_id)
-
-    logger.info(f'/plaid/link_account: {cur_user_id} public token is being generated')
-    public_token = await plaid_get_public_token(cur_user_id, institution_id, 
-                        ins_details.supports_transactions, ins_details.supports_investments)
-    await plaid_exchange_public_token(cur_user_id, public_token, institution_id)
-        
+# Process, Process, Load, Load, Return
+# takes in a LinkAccountRequest model as input
+@plaid_router.post('/link_account')
+async def link_account(dep = Depends(plaid_exchange_public_token_dependency), cur_user: str = Depends(verify_token_depdendency)) -> LinkAccountResponse:
+    logger.info(f'/plaid/link_account: endpoint for user {cur_user} called')
     return LinkAccountResponse(message=LinkAccountResponseEnum.SUCCESS)

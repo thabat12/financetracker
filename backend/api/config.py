@@ -44,5 +44,5 @@ async def yield_db():
             yield session
 
 async def yield_client():
-    async with httpx.AsyncClient() as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         yield client

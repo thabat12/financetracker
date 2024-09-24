@@ -92,6 +92,7 @@ def generate_token(user_id: str) -> str:
     
     return token
 
+# verify_token manages its own database session
 async def verify_token(authorization: str = Header(...), session: AsyncSession = Depends(yield_db)) -> tuple[bool, str]:
     token = authorization.strip().split(' ')[-1].strip()
     session: AsyncSession
