@@ -1,8 +1,8 @@
-
+import httpx
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.config import logger, yield_db
+from api.config import logger, yield_db, yield_client
 from db.models import Institution
 from api.api_utils.plaid_util import LinkAccountRequest, LinkAccountResponse, LinkAccountResponseEnum
 from api.api_utils.auth_util import verify_token
@@ -84,31 +84,34 @@ async def db_update_institution_details_dependency(
 
 async def plaid_get_public_token_dependency(
         ins_details: Institution = Depends(db_update_institution_details_dependency), 
-        cur_user: str = Depends(verify_token)) -> str:
+        cur_user: str = Depends(verify_token),
+        client: httpx.AsyncClient = Depends(yield_client)) -> str:
     
     logger.info(f"plaid_get_public_token_dependency called for user: {cur_user}, institution: {ins_details.name}")
-    public_token: str = await plaid_get_public_token(ins_details=ins_details)
+    public_token: str = await plaid_get_public_token(ins_details=ins_details, client=client)
     return public_token
 
 async def plaid_exchange_public_token_dependency(
-        public_token = Depends(plaid_get_public_token_dependency), 
-        cur_user = Depends(verify_token_depdendency)) -> LinkAccountResponse:
+        public_token: str = Depends(plaid_get_public_token_dependency), 
+        cur_user: str = Depends(verify_token_depdendency),
+        client: httpx.AsyncClient = Depends(yield_client)) -> LinkAccountResponse:
     
     logger.info(f"plaid_exchange_public_token_dependency called for user: {cur_user}, public token: {public_token}")
-    access_token = await exchange_public_token(public_token=public_token)
+    access_token = await exchange_public_token(public_token=public_token, client=client)
     return access_token
 
 async def db_update_user_access_key_dependency(
         access_key: str = Depends(plaid_exchange_public_token_dependency), 
         cur_user: str = Depends(verify_token_depdendency),
-        ins_details: Institution = Depends(db_update_institution_details_dependency)) -> None:
+        ins_details: Institution = Depends(db_update_institution_details_dependency),
+        session: AsyncSession = Depends(yield_db)) -> None:
     
     logger.info(f"db_update_user_access_key_dependency called for user: {cur_user}, institution: {ins_details.name}")
-    await update_user_access_key(access_key=access_key, cur_user=cur_user, ins_details=ins_details)
+    await update_user_access_key(access_key=access_key, cur_user=cur_user, ins_details=ins_details, session=session)
 
 # Process, Process, Load, Load, Return
 # takes in a LinkAccountRequest model as input
 @plaid_router.post('/link_account')
-async def link_account(dep = Depends(plaid_exchange_public_token_dependency), cur_user: str = Depends(verify_token_depdendency)) -> LinkAccountResponse:
+async def link_account(dep = Depends(db_update_user_access_key_dependency), cur_user: str = Depends(verify_token_depdendency)) -> LinkAccountResponse:
     logger.info(f'/plaid/link_account: endpoint for user {cur_user} called')
     return LinkAccountResponse(message=LinkAccountResponseEnum.SUCCESS)

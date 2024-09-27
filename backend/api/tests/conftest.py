@@ -25,7 +25,6 @@ from api.routes.auth import generate_token
 @asynccontextmanager
 async def testlifespan(app: FastAPI):
     # set up new context for app which points to in-memory database
-    set_global_session(TestSession)
     app.include_router(auth_router, prefix='/auth')
     app.include_router(plaid_router, prefix='/plaid')
     app.include_router(data_router, prefix='/data')

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import *
-from api.config import Session, async_database_engine, settings, logger, yield_db, yield_client
+from api.config import logger, yield_db, yield_client
 from api.api_utils.auth_util import LoginGoogleRequest, LoginGoogleResponse, LoginGoogleReturn, GoogleAuthUserInfo
 from api.api_utils.auth_util import load_google_login_response, login_google_db_operation, create_auth_session
 

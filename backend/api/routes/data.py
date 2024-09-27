@@ -2,12 +2,12 @@ from enum import Enum
 import asyncio
 from pydantic import BaseModel
 from logging import Logger
-from fastapi import APIRouter, HTTPException, Header, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Header
 from sqlalchemy import select, update, case, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 
-from api.config import Session, settings, logger
+from api.config import settings, logger
 from api.api_utils.auth_util import verify_token
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data, encrypt_float, decrypt_float
 from db.models import *
@@ -42,24 +42,6 @@ class PlaidRefreshAccountsResponse(BaseModel):
 
 '''
 async def plaid_refresh_accounts(user_id: str, user_access_key: str, user_key: bytes, institution_id: str = None) -> PlaidRefreshAccountsResponse:
-    logger.info('/data/plaid_refresh_accounts')
-    async with httpx.AsyncClient() as client:
-        client: httpx.AsyncClient
-        
-        resp = await client.post(
-            f'{settings.test_plaid_url}/accounts/get',
-            headers={'Content-Type':'application/json'},
-            json={
-                'client_id': settings.test_plaid_client_id,
-                'secret': settings.plaid_secret,
-                'access_token': user_access_key
-            }
-        )
-
-        all_data = resp.json()
-        # print(json.dumps(all_data, indent=4), 'is all the raw data!')
-
-        refreshed_account_data: List[PlaidAccount] = [PlaidAccount(**data) for data in all_data['accounts']]
 
     lock_key = hash(f'plaid_refresh_accounts:{user_id}') & 0x7fffffffffffffff
 
@@ -195,152 +177,6 @@ class PlaidRefreshTransactionsResponse(BaseModel):
     returns a list of 3 elements of plaidtransaction objects: added, modified, removed
 
 '''
-async def plaid_refresh_transactions(user_id: str, user_access_key: str, user_key: bytes, institution_id: str, access_key_id: str) -> List[PlaidTransaction]:
-    logger.info('/data/plaid_refresh_transactions')
-    transaction_hash = hash(f'plaid_refresh_transactions:{user_id}') & 0x7fffffffffffffff
-
-    async with Session() as session:
-        async with session.begin():
-            await session.execute(text(f'SELECT pg_advisory_lock({transaction_hash});'))
-            print('sleeping for 5 seconds')
-            asyncio.sleep(5)
-            await session.execute(text(f'SELECT pg_advisory_unlock({transaction_hash});'))
-            logger.info(f'acquired the database lock for transactions: {transaction_hash}')
-            logger.info('/data/plaid_refresh_transactions: acquired database lock')
-            # immediate employ a transaction lock on refresh_transactions
-            user: User = await session.get(User, user_id)
-
-
-            if not user:
-                raise Exception('Whats going on: the user', user_id, 'is invalid!')
-
-            access_key_record: AccessKey = await session.get(AccessKey, access_key_id)
-            cur_transactions_cursor: str | None = access_key_record.transactions_sync_cursor
-
-            async with httpx.AsyncClient() as client:
-
-                # need to be careful here because of a while loop so adding this limit stopper
-                limit = 20
-                has_more = True
-
-                added, modified, removed = [], [], []
-
-                while has_more:
-                    if limit == 0:
-                        raise HTTPException(status_code=500, detail=f'Detected more than {limit} calls to Plaid API on plaid_refresh_transactions!!! DANGER')
-                    
-                    print('the cur transactions cursor', cur_transactions_cursor)
-
-                    resp = await client.post(
-                        f'{settings.test_plaid_url}/transactions/sync',
-                        headers={'Content-Type': 'application/json'},
-                        json={
-                            'client_id': settings.test_plaid_client_id,
-                            'secret': settings.plaid_secret,
-                            'access_token': user_access_key,
-                            'cursor': cur_transactions_cursor if cur_transactions_cursor else None,
-                            'count': 500
-                        }
-                    )
-                    logger.info(f'/data/plaid_refresh_transactions: {user_id} plaid endpoint for /transactions/sync is called')
-                    resp = resp.json()
-
-                    print('THE DATA')
-
-                    added.extend(list(map(lambda r: PlaidTransaction(**r), resp['added'])))
-                    modified.extend(list(map(lambda r: PlaidTransaction(**r), resp['modified'])))
-                    removed.extend(list(map(lambda r: PlaidTransaction(**r), resp['removed'])))
-
-                    limit -= 1
-                    has_more = resp['has_more']
-                    cur_transactions_cursor = resp['next_cursor']
-
-            # sets to monitor database changes
-            current_merchants_indb = await session.scalars(select(Merchant.merchant_id))
-            current_merchants_indb = set(current_merchants_indb.all())
-            current_transactions_indb = await session.scalars(select(Transaction.transaction_id).where(Transaction.user_id == user_id))
-            current_transactions_indb = set(current_transactions_indb.all())
-
-            # current time 
-            now = datetime.now()
-            
-            # set the transactions sync cursor
-            new_transactions_cursor = cur_transactions_cursor
-            logger.info(f'/data/plaid_refresh_transactions: adding the transactions sync cursor {new_transactions_cursor} to access key record')
-
-            access_key_record.transactions_sync_cursor = new_transactions_cursor
-            access_key_record.last_transactions_account_sync = now
-
-            logger.info(f'/data/plaid_refresh_transactions: {user_id} adding {len(added)} transactions to database')
-            for added_transaction in added:
-                added_transaction: PlaidTransaction
-
-                # first populate the merchant data if applicable
-                if added_transaction.merchant_entity_id and added_transaction.merchant_entity_id not in current_merchants_indb:
-                    session.add(Merchant(merchant_id = added_transaction.merchant_entity_id, \
-                                              merchant_name = added_transaction.merchant_name, \
-                                              merchant_logo = added_transaction.logo_url))
-                    current_merchants_indb.add(added_transaction.merchant_entity_id)
-
-                session.add(
-                    Transaction(
-                        transaction_id = added_transaction.transaction_id,
-                        name = encrypt_data(bytes(added_transaction.name, encoding='utf-8'), user_key),
-                        is_pending = added_transaction.pending,
-                        amount = encrypt_float(added_transaction.amount, user_key),
-                        authorized_date = datetime.strptime(added_transaction.authorized_date, '%Y-%m-%d') if added_transaction.authorized_date else None,
-                        personal_finance_category = encrypt_data(bytes(added_transaction.personal_finance_category.primary, encoding='utf-8'), user_key),
-                        user_id = user_id,
-                        account_id = added_transaction.account_id,
-                        merchant_id = added_transaction.merchant_entity_id if added_transaction.merchant_entity_id is not None else None,
-                        update_status = 'added',
-                        update_status_date = now,
-                        institution_id = institution_id
-                    )
-                )
-
-            logger.info(f'/data/plaid_refresh_transactions: {user_id} modifying {len(modified)} transactions to database')
-            for modified_transaction in modified:
-                modified_transaction: PlaidTransaction
-
-                if modified_transaction.transaction_id not in current_transactions_indb:
-                    raise Exception('We are trying to modify a transaction id that doesnt exist onthe database!')
-
-                if modified_transaction.merchant_entity_id and modified_transaction.merchant_entity_id not in current_merchants_indb:
-                    session.add(Merchant(merchant_id = added_transaction.merchant_entity_id, \
-                                              merchant_name = added_transaction.merchant_name, \
-                                              merchant_logo = added_transaction.logo_url))
-                    current_merchants_indb.add(modified_transaction.merchant_entity_id)
-                    
-                smt = update(Transaction).where(Transaction.transaction_id == modified_transaction.transaction_id).values({
-                    'amount': encrypt_float(added_transaction.amount, user_key),
-                    'authorized_date': datetime.strptime(added_transaction.authorized_date, '%Y-%m-%d') if added_transaction.authorized_date else None,
-                    'personal_finance_category': encrypt_data(bytes(added_transaction.personal_finance_category.primary, encoding='utf-8'), user_key),
-                    'user_id': user_id,
-                    'account_id': added_transaction.account_id,
-                    'merchant_id': added_transaction.merchant_entity_id,
-                    'is_pending': added_transaction.pending,
-                    'name': encrypt_data(bytes(added_transaction.name, encoding='utf-8'), user_key)
-                })
-
-                await session.execute(smt)
-
-            logger.info(f'/data/plaid_refresh_transactions: {user_id} removing {len(removed)} transactions to database')
-            for removed_transaction in removed:
-                removed_transaction: PlaidTransaction
-
-                if removed_transaction.transaction_id not in current_transactions_indb:
-                    raise Exception('Trying to remove a transaction that does\'t even exist in the db!')
-                smt = delete(Transaction).where(Transaction.transaction_id == removed_transaction.transaction_id)
-                await session.execute(smt)
-
-
-            await session.commit()
-
-            logger.info(f'/data/plaid_refresh_transactions: {user_id} transaction modifications set')
-            logger.info('/data/plaid_refresh_transactions: releasing database lock')
-            return PlaidRefreshTransactionsResponse(added=added, modified=modified, removed=removed, new_transactions_cursor=new_transactions_cursor)
-
 async def plaid_refresh_user_account_data(user_id: str, user_key: bytes):
     logger.info('/data/plaid_refresh_user_account_data')
 
@@ -384,7 +220,6 @@ async def plaid_refresh_user_account_data(user_id: str, user_key: bytes):
             cur_institution_data: Institution = all_institution_data[cur_institution]
 
             if cur_institution_data.supports_transactions:
-
                 logger.info(f'/data/plaid_refresh_user_account_data: {user_id} institution {cur_institution} supports auth!')
                 await plaid_refresh_accounts(user_id=user_id, user_access_key=user_access_key, user_key=user_key, institution_id=cur_institution)
 
@@ -497,14 +332,6 @@ async def db_get_transactions(user_id: str, data_type: DBGetTransactionsEnum) ->
 
                 return DBGetTransactionsResponse(accounts=accounts_resp)
 
-class GetTransactionsResponseEnum(Enum):
-    SUCCESS = 'success'
-    INVALID_AUTH = 'invalid_auth'
-
-class GetTransactionsResponse(BaseModel):
-    message: GetTransactionsResponseEnum = None
-    transactions: Optional[List[PTransaction]] = None
-    merchants: Optional[List[PMerchant]] = None
 
 @data_router.post('/get_transactions')
 async def get_transactions(authorization: str = Header(...)) -> GetTransactionsResponse:

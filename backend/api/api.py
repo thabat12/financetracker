@@ -7,9 +7,9 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import select, update, delete, create_engine
-from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 import asyncio
 
 
@@ -17,16 +17,16 @@ from db.models import *
 from api.routes.auth import auth_router
 from api.routes.plaid import plaid_router
 from api.routes.data import data_router
-from api.config import async_database_engine
 from api.config import settings
-from api.config import yield_db
 from api.config import set_global_session
-from api.config import Session
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # set up the session for context manager
+    async_database_engine = create_async_engine(settings.async_sqlalchemy_database_uri)
+    # sessionmaker is a session factory, yielding a new session on each call
+    Session = sessionmaker(bind=async_database_engine, class_=AsyncSession, expire_on_commit=False)
     set_global_session(Session)
     app.include_router(auth_router, prefix='/auth')
     app.include_router(plaid_router, prefix='/plaid')

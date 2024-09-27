@@ -1,12 +1,11 @@
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Header, Depends
+from fastapi import HTTPException, Depends
 import httpx
 from enum import Enum
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.config import Session, settings, yield_client, yield_db, logger
-from api.api_utils.auth_util import verify_token
+from api.config import settings, yield_client, yield_db, logger
 from db.models import *
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data
 
@@ -38,17 +37,15 @@ class StatusModel(BaseModel):
     liabilities_updates: Optional[StatusDetailModel] = None
 
 class InstitutionModel(BaseModel):
-    country_codes: List[str]
+    country_codes: Optional[List[str] | None] = None
     institution_id: str
+    logo: Optional[str | None] = None
     name: str
     products: List[str]
-    routing_numbers: Optional[List[str]] = None
-    dtc_numbers: Optional[List[str]] = None
+    routing_numbers: Optional[List[str] | None] = None
     oauth: bool
-    status: StatusModel
-    primary_color: Optional[str] = None
+    primary_color: Optional[str | None] = None
     url: str
-    logo: Optional[str] = None
 
 class InstitutionsGetByIdResponse(BaseModel):
     institution: InstitutionModel
@@ -97,7 +94,6 @@ async def plaid_get_institution_by_id(institution_id: str) -> InstitutionsGetByI
     
     return InstitutionsGetByIdResponse(**resp)
 
-
 async def db_update_institution_details(request: LinkAccountRequest, session: AsyncSession):
     logger.info('/plaid/db_update_institution_details')
 
@@ -134,7 +130,7 @@ async def db_update_institution_details(request: LinkAccountRequest, session: As
     logger.info(f'/plaid/db_update_institution_details: {institution_id} added to the database, and we are done!')
     return new_ins
 
-async def plaid_get_public_token(ins_details: Institution, client: AsyncSession = Depends(yield_client)) -> str:
+async def plaid_get_public_token(ins_details: Institution, client: httpx.AsyncClient) -> str:
     logger.info('/plaid/plaid_get_public_token: called')
 
     public_token = None
@@ -170,7 +166,6 @@ async def plaid_get_public_token(ins_details: Institution, client: AsyncSession 
         logger.error('there is a read timeout!')
         raise HTTPException(status_code=500, detail='Plaid Endpoint Read Timeout') from e
     except Exception as e:
-        print(e)
         logger.error('/plaid/plaid_get_public_token: plaid endpoint request failed')
         
         raise HTTPException(status_code=500, detail='Plaid Endpoint Request Failed') from e
@@ -178,7 +173,7 @@ async def plaid_get_public_token(ins_details: Institution, client: AsyncSession 
     return public_token
 
 # returns the plaid access token
-async def exchange_public_token(public_token: str, client: httpx.AsyncClient = Depends(yield_client)) -> str:
+async def exchange_public_token(public_token: str, client: httpx.AsyncClient) -> str:
     logger.info('/plaid/plaid_exchange_public_token')
     access_token = None
     try:
@@ -202,7 +197,7 @@ async def exchange_public_token(public_token: str, client: httpx.AsyncClient = D
     
     return access_token
 
-async def update_user_access_key(access_key: str, cur_user: str, ins_details: Institution, session: AsyncSession = Depends(yield_db)):
+async def update_user_access_key(access_key: str, cur_user: str, ins_details: Institution, session: AsyncSession):
     cur_user: User
     institution_id = ins_details.institution_id
     cur_user = await session.get(User, cur_user)

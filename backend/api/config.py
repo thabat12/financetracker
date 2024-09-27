@@ -20,9 +20,6 @@ class Settings(BaseSettings):
     auth_secret_key: str
 settings = Settings()
 
-async_database_engine = create_async_engine(settings.async_sqlalchemy_database_uri)
-Session = sessionmaker(bind=async_database_engine, class_=AsyncSession, expire_on_commit=False)
-
 # yield_db
 global_session = None
 session_set = False
