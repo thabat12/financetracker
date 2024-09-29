@@ -35,6 +35,7 @@ class PlaidAccount(BaseModel):
     persistent_account_id: Optional[str | None] = None
     subtype: Optional[str | None] = None
     type: Optional[str | None] = None
+    institution_id: Optional[str | None] = None
 
 class PlaidRefreshAccountsResponse(BaseModel):
     new: Optional[List[PlaidAccount]] = None
@@ -336,31 +337,9 @@ async def db_update_transactions(
 
         await session.commit()
 
-
-
-async def plaid_get_refreshed_accounts(
-        user_access_key: str,
-        client: httpx.AsyncClient
-    ) -> List[PlaidAccount]:
-
-    resp = await client.post(
-            f'{settings.test_plaid_url}/accounts/get',
-            headers={'Content-Type':'application/json'},
-            json={
-                'client_id': settings.test_plaid_client_id,
-                'secret': settings.plaid_secret,
-                'access_token': user_access_key
-            }
-        )
-
-    all_data = resp.json()
-    return [PlaidAccount(**data) for data in all_data['accounts']]
-
-
 def map_plaid_account_to_account(
         plaid_account: PlaidAccount,
         user_key: bytes,
-        institution_id: str,
         cur_user: str
     ):
 
@@ -374,45 +353,115 @@ def map_plaid_account_to_account(
         user_id = cur_user,
         update_status = 'added',
         update_status_date = datetime.now(),
-        institution_id=institution_id
+        institution_id=plaid_account.institution_id
     )
+
+async def db_update_plaid_accounts(
+        user_key: bytes,
+        session: AsyncSession,
+        updated_accounts: List[PlaidAccount],
+    ) -> None:
+
+    await session.execute(
+        update(Account)
+        .values(
+            balance_available=case(
+                {account.account_id: encrypt_float(account.balances.available, user_key) for account in updated_accounts},
+                value=Account.account_id
+            ),
+            balance_current=case(
+                {account.account_id: encrypt_float(account.balances.current, user_key) for account in updated_accounts},
+                value=Account.account_id
+            ),
+            update_status=case(
+                {account.account_id: 'updated' for account in updated_accounts},
+                value=Account.account_id
+            ),
+            update_status_date=case(
+                {account.account_id: datetime.now() for account in updated_accounts},
+                value=Account.account_id
+            )
+        )
+        .where(Account.account_id.in_([account.account_id for account in updated_accounts]))
+    )
+
+async def db_delete_plaid_accounts(
+       deleted_accounts: set[str],
+       session: AsyncSession 
+    ) -> None:
+    smt = delete(Account).where(Account.account_id.in_(deleted_accounts))
+    await session.execute(smt)
+
+# gives every single plaid account that exists under all the user keys updated
+async def plaid_get_refreshed_accounts(
+        user_key: bytes,
+        user_access_keys: List[AccessKey],
+        all_institutions: List[Institution],
+        client: httpx.AsyncClient
+    ) -> List[PlaidAccount]:
+
+    all_accounts = []
+
+    for cur_institution, cur_user_access_key in zip(all_institutions, user_access_keys):
+        decrypted_user_access_key: str = decrypt_access_key(access_key=cur_user_access_key.access_key, \
+                                                            user_key=user_key)
+        resp = await client.post(
+                f'{settings.test_plaid_url}/accounts/get',
+                headers={'Content-Type':'application/json'},
+                json={
+                    'client_id': settings.test_plaid_client_id,
+                    'secret': settings.plaid_secret,
+                    'access_token': decrypted_user_access_key
+                }
+            )
+
+        all_data = resp.json()
+        all_data['institution_id'] = cur_institution
+
+        all_accounts.extend([PlaidAccount(**data) for data in all_data['accounts']])
+
+    return all_accounts
 
 
 async def db_update_accounts(
         cur_user: str, 
         user_key: bytes,
-        user_access_key: str,
-        all_institutions: List[Institution], 
-        access_keys: List[AccessKey],
         refreshed_account_data: List[PlaidAccount],
+        all_institutions: List[Institution],
         session: AsyncSession
     ) -> None:
 
+    smt = select(Account.account_id).where(and_(Account.user_id == cur_user, \
+                                                Account.institution_id.in_(all_institutions)))
+    existing_account_ids = await session.scalars(smt)
+    existing_account_ids = set(existing_account_ids.all())
+    
+    refreshed_account_ids = set(account.account_id for account in refreshed_account_data)
+    new_accounts = refreshed_account_ids - existing_account_ids
+    updated_accounts = refreshed_account_ids & existing_account_ids
+    deleted_accounts = existing_account_ids - refreshed_account_ids
 
+    na, ua, da = [], [], []
+    for cur_refreshed_account in refreshed_account_data:
+        if cur_refreshed_account.account_id in new_accounts:
+            na.append(cur_refreshed_account)
+        elif cur_refreshed_account.account_id in updated_accounts:
+            ua.append(cur_refreshed_account)
+        else:
+            da.append(cur_refreshed_account)
 
-    for cur_institution, cur_access_key in zip(all_institutions, access_keys):
+    new_accounts, updated_accounts, deleted_accounts = na, ua, da
+ 
 
-        smt = select(Account.account_id).where(Account.user_id == cur_user)
-        existing_account_ids = await session.scalars(smt)
-        existing_account_ids = set(existing_account_ids.all())
-        
-        # keeping track of the account ids here
-        refreshed_account_ids = set(account.account_id for account in refreshed_account_data)
-        new_accounts = refreshed_account_ids - existing_account_ids
-        updated_accounts = refreshed_account_ids & existing_account_ids
-        deleted_accounts = existing_account_ids - refreshed_account_ids
+    for i, na in enumerate(new_accounts):
+        new_accounts[i] = map_plaid_account_to_account(plaid_account=na, user_key=user_key)
 
-        for i, na in enumerate(new_accounts):
-            new_accounts[i] = map_plaid_account_to_account(plaid_account=i, user_key=user_key, institution_id=)
+    session.add_all(new_accounts)
 
-'''
-    BIG ISSUE: i cannot naively go through all the access keys and compare them to the new/ updated/ removed
-    access keys of just only one user. so for this to properly work, i need to account for every single
-    access key account data information and then update the data accordingly. this might also be the issue
-    for transactions, which I will have to modify!
+    if updated_accounts:
+        db_update_plaid_accounts(user_key=user_key, session=session, updated_accounts=updated_accounts)
 
-    == more work ahead unfortunately...
+    if deleted_accounts:
+        db_delete_plaid_accounts(deleted_accounts=deleted_accounts, session=session)
 
-
-
-'''
+    await session.commit()
