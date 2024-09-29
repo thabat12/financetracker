@@ -15,7 +15,7 @@ import secrets
 
 from db.models import *
 from api.config import settings, logger, yield_db
-from api.crypto.crypto import encrypt_data, db_key_bytes
+from api.crypto.crypto import encrypt_data, decrypt_data, db_key_bytes
 
 '''
     Constants: global variables that affect certain behaviors of functions that modify the database,
@@ -123,6 +123,11 @@ async def verify_token(authorization: str = Header(...), session: AsyncSession =
     except Exception:
         raise HTTPException(status_code=500, detail='Token data parsing went wrong!')
 
+
+async def decrypt_user_key(cur_user: str, session: AsyncSession):
+    smt = select(User.user_key).where(User.user_id == cur_user)
+    user_key: bytes = await session.scalar(smt)
+    return decrypt_data(user_key, db_key_bytes)
 
 '''
     Database modification operations: all the database modificiations that change certain states of

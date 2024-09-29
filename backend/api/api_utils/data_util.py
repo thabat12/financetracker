@@ -163,7 +163,7 @@ async def db_get_transactions(
     all_transactions = map(lambda t: decrypt_transaction_data(transaction=t, user_key=user_key), \
                            all_transactions)
     
-    return GetTransactionsResponse(message=GetAccountsResponseEnum.SUCCESS, transactions=all_transactions)
+    return GetTransactionsResponse(message=GetTransactionsResponseEnum.SUCCESS, transactions=all_transactions)
 
 def reorder_institutions_helper(institution_ids: List[str], all_institutions: List[Institution]):
     institution_mapper = { ins_id: i for i, ins_id in enumerate(institution_ids) }
@@ -465,3 +465,20 @@ async def db_update_accounts(
         db_delete_plaid_accounts(deleted_accounts=deleted_accounts, session=session)
 
     await session.commit()
+
+async def db_get_accounts(
+        cur_user: str, 
+        user_key: bytes, 
+        session: AsyncSession
+    ) -> GetTransactionsResponse:
+    
+    logger.info('util method caled: db_get_transactions')
+    all_transactions: List = await session.scalars(select(Transaction) \
+                                                    .where(Transaction.user_id == cur_user))
+    
+    all_transactions = all_transactions.all()
+    
+    all_transactions = map(lambda t: decrypt_transaction_data(transaction=t, user_key=user_key), \
+                           all_transactions)
+    
+    return GetTransactionsResponse(message=GetAccountsResponseEnum.SUCCESS, transactions=all_transactions)
