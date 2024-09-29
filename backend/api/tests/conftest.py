@@ -1,6 +1,5 @@
 import os
 from fastapi.testclient import TestClient
-from api.api import app
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
 from api.crypto.crypto import encrypt_data, encrypt_float, encrypt_integer
@@ -12,24 +11,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from db.models import *
-from api.routes.auth import auth_router
-from api.routes.plaid import plaid_router
-from api.routes.data import data_router
-from api.config import set_global_session
-from api.config import yield_db
-from api.tests.config import engine, user_data, TestSession, testapp
-from api.crypto.crypto import db_key_bytes
-from api.routes.auth import generate_token
 
-# create a new context manager for the test app
-@asynccontextmanager
-async def testlifespan(app: FastAPI):
-    # set up new context for app which points to in-memory database
-    app.include_router(auth_router, prefix='/auth')
-    app.include_router(plaid_router, prefix='/plaid')
-    app.include_router(data_router, prefix='/data')
-    yield
-    await engine.dispose()
+from api.api import app
+from api.tests.config import engine, user_data, TestSession, testapp, override_yield_db
+from api.crypto.crypto import db_key_bytes
+from api.api_utils.auth_util import GoogleAuthUserInfo
+
+
+from api.routes.auth import load_google_login_response_dependency
 
 async def initialize_data(session):
 
@@ -53,13 +42,18 @@ async def initialize_data(session):
     ]
 
 
+def override_load_google_login_response_dependency(google_auth_user_info: GoogleAuthUserInfo):
+    def override():
+        return google_auth_user_info
     
+    return override
+
 
 @pytest.fixture(scope='session', autouse=True)
-async def setup_database():
+async def setup_test_environment():
     # change the lifecycle context manager to point to new local DB
     # first, set up the global session
-    
+    app.dependency_overrides[load_google_login_response_dependency] = override_load_google_login_response_dependency
     
 
     # bypass the google signin stuff by directly adding users to the database

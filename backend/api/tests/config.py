@@ -18,3 +18,7 @@ user_data = {
 
 # it's the same thing but given a different name
 testapp = app
+
+async def override_yield_db():
+    async with TestSession as session:
+        yield session
