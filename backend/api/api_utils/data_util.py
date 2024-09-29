@@ -466,19 +466,47 @@ async def db_update_accounts(
 
     await session.commit()
 
+'''
+account_id = plaid_account.account_id,
+        balance_available = encrypt_float(plaid_account.balances.available, user_key),
+        balance_current = encrypt_float(plaid_account.balances.current, user_key),
+        iso_currency_code = plaid_account.balances.iso_currency_code,
+        account_name = encrypt_data(bytes(plaid_account.name, encoding='utf-8'), user_key),
+        account_type = encrypt_data(bytes(plaid_account.type, encoding='utf-8'), user_key),
+        user_id = cur_user,
+        update_status = 'added',
+        update_status_date = datetime.now(),
+        institution_id=plaid_account.institution_id
+
+'''
+
+def decrypt_account_data(account: Account, user_key: bytes) -> PAccount:
+    return PAccount(
+        account_id=account.account_id,
+        balance_available = decrypt_float(account.balance_available, user_key),
+        balance_current = decrypt_float(account.balance_available, user_key),
+        iso_currency_code = account.iso_currency_code,
+        account_name = decrypt_data(account.account_name, user_key).decode(encoding='utf-8'),
+        account_type = decrypt_data(account.account_type, user_key).decode(encoding='utf-8'),
+        user_id = account.user_id,
+        update_status = 'added',
+        update_status_date = datetime.now(),
+        institution_id=account.institution_id
+    )
+
 async def db_get_accounts(
         cur_user: str, 
         user_key: bytes, 
         session: AsyncSession
     ) -> GetTransactionsResponse:
     
-    logger.info('util method caled: db_get_transactions')
-    all_transactions: List = await session.scalars(select(Transaction) \
-                                                    .where(Transaction.user_id == cur_user))
+    logger.info('util method caled: db_get_accounts')
+    all_accounts: List = await session.scalars(select(Account) \
+                                                    .where(Account.user_id == cur_user))
     
-    all_transactions = all_transactions.all()
+    all_accounts = all_accounts.all()
     
-    all_transactions = map(lambda t: decrypt_transaction_data(transaction=t, user_key=user_key), \
-                           all_transactions)
+    all_accounts = map(lambda a: decrypt_account_data(transaction=a, user_key=user_key), \
+                           all_accounts)
     
-    return GetTransactionsResponse(message=GetAccountsResponseEnum.SUCCESS, transactions=all_transactions)
+    return GetAccountsResponse(message=GetAccountsResponseEnum.SUCCESS, accounts=all_accounts)

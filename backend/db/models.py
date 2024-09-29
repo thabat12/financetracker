@@ -197,6 +197,7 @@ class PAccount(PORM):
     iso_currency_code: Optional[str] = None
     account_name: Optional[str] = None
     account_type: Optional[str] = None
+    user_id: Optional[str] = None
     update_status: Optional[str] = None
     update_status_date: Optional[datetime] = None
     institution_id: str
