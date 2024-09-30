@@ -7,5 +7,6 @@ PyJWT
 redis
 cryptography
 pytest-asyncio
+pytest-ordering
 pytest
 aiosqlite

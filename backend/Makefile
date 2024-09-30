@@ -1,9 +1,9 @@
 MODELS_TARGET = models.py
 
 # python environments
-download_dependencies: ./api/requirements.txt ./batch/requirements.txt ./db/requirements.txt
-	@cat ./api/requirements.txt ./batch/requirements.txt ./db/requirements.txt | sort | uniq | xargs pip uninstall -y
-	@cat ./api/requirements.txt ./batch/requirements.txt ./db/requirements.txt | sort | uniq | xargs pip install
+download_dependencies: ./api/requirements.txt ./db/requirements.txt
+	@cat ./api/requirements.txt ./db/requirements.txt | sort | uniq | xargs pip uninstall -y
+	@cat ./api/requirements.txt ./db/requirements.txt | sort | uniq | xargs pip install
 
 # testing
 test_models:
@@ -31,4 +31,4 @@ clear_db:
 	@python -m db.init_db
 
 test_api:
-	@python -m pytest
+	@python -m pytest -v -s

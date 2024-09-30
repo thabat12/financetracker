@@ -1,6 +1,5 @@
 from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean, LargeBinary, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, declarative_base
 
 from pydantic import BaseModel, Field
 from typing import Annotated, Optional, List
@@ -184,7 +183,7 @@ class Subscription(Base):
         return f'<Subscription {self.name}>'
     
 class PORM(BaseModel):
-    class Config:
+    class ConfigDict:
         from_attributes = True
 
 class PUser(PORM):
@@ -202,8 +201,8 @@ class PAccount(PORM):
     update_status_date: Optional[datetime] = None
     institution_id: str
 
-    class Config:
-        orm_mode = True
+    class ConfigDict:
+        from_attributes = True
 
 class PMerchant(PORM):
     merchant_id: str
@@ -225,8 +224,8 @@ class PTransaction(PORM):
     merchant_id: Optional[str] = None
     institution_id: str
 
-    class Config:
-        orm_mode = True
+    class ConfigDict:
+        from_attributes = True
 
 class PSubscription(PORM):
     subscription_id: int

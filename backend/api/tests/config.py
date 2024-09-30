@@ -3,9 +3,12 @@ from fastapi.testclient import TestClient
 from api.api import app
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import create_engine
 from api.crypto.crypto import encrypt_data, encrypt_float, encrypt_integer
+from api.tests.data.userdata import generate_random_mock_google_user
 
 DATABASE_URL = 'sqlite+aiosqlite:///:memory:'
+TESTCLIENT_BASE_URL = 'http://test'
 engine = create_async_engine(DATABASE_URL)
 TestSession = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -17,8 +20,10 @@ user_data = {
 }
 
 # it's the same thing but given a different name
-testapp = app
 
 async def override_yield_db():
-    async with TestSession as session:
+    async with TestSession() as session:
         yield session
+
+def override_google_login_response_dependency():
+    return generate_random_mock_google_user() # creates a random GoogleAuthUserInfo object
