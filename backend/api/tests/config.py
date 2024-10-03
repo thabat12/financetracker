@@ -8,8 +8,8 @@ from api.tests.data.userdata import generate_random_mock_google_user
 
 from api.config import settings
 
-# DATABASE_URL = 'sqlite+aiosqlite:///:memory:'
-DATABASE_URL = settings.test_sqlalchemy_database_uri
+DATABASE_URL = 'sqlite+aiosqlite:///:memory:'
+# DATABASE_URL = settings.test_async_sqlalchemy_database_uri
 TESTCLIENT_BASE_URL = 'http://test'
 engine = create_async_engine(DATABASE_URL)
 TestSession = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
