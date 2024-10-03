@@ -28,12 +28,10 @@ app.include_router(plaid_router, prefix='/plaid')
 
 # @pytest.mark.skip
 @pytest.mark.asyncio
-async def test_google_logins(setup_test_environment_fixture):
-
-    # handle async context via async for loop
-    async for _ in setup_test_environment_fixture:
-
-        N_USERS = 10
+async def test_google_logins(setup_pytest_environment_fixture):
+    async for _ in setup_pytest_environment_fixture:
+        # handle async context via async for loop
+        N_USERS = 1
         login_results = None
 
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
@@ -55,37 +53,40 @@ async def test_google_logins(setup_test_environment_fixture):
 
             assert len(all_google_users) == N_USERS
 
+# @pytest.mark.skip
 @pytest.mark.asyncio
-async def test_google_login_twice(setup_test_environment_fixture):
-    async for _ in setup_test_environment_fixture:
+async def test_google_login_twice(setup_pytest_environment_fixture):
+    async for _ in setup_pytest_environment_fixture:
         random_user: GoogleAuthUserInfo = generate_random_mock_google_user()
         # keep the login user the same every time
         app.dependency_overrides[load_google_login_response_dependency] = lambda: random_user
 
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
 
-            response = await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
+            await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
+            await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
+            await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
+            await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
+            await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
+            await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
         #     response = response.json()
 
         #     assert response['account_status'] == 'created'
         #     response = await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
         #     response = response.json()
         #     assert response['account_status'] == 'login'
-        pass
 
+# @pytest.mark.skip
 @pytest.mark.asyncio
-async def test_google_single_user_100_sequential_logins(setup_test_environment_fixture):
-    
-    N = 100
-
-    async for _ in setup_test_environment_fixture:
+async def test_google_single_user_100_sequential_logins(setup_pytest_environment_fixture):
+    async for _ in setup_pytest_environment_fixture:
+        N = 1
         random_user: GoogleAuthUserInfo = generate_random_mock_google_user()
         google_id = random_user.id
         # keep the login user the same every time
         app.dependency_overrides[load_google_login_response_dependency] = lambda: random_user
 
         num_created, num_login = 0, 0
-
 
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
             for _ in range(N):

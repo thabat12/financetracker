@@ -170,6 +170,7 @@ async def create_account(new_user: CreateAccountRequest, link_id: str, session: 
         logger.error(str(e))
         raise HTTPException(status_code=500, detail=f'Database Operation Failed! {e}') from e
     
+
     return CreateAccountReturn(message=MessageEnum.CREATED, user_id=uuid)
 
 async def login_google_db_operation(user_info: GoogleAuthUserInfo, session: AsyncSession) -> LoginGoogleReturn:

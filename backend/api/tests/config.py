@@ -8,11 +8,11 @@ from api.tests.data.userdata import generate_random_mock_google_user
 
 from api.config import settings
 
-DATABASE_URL = 'sqlite+aiosqlite:///:memory:'
-# DATABASE_URL = settings.test_async_sqlalchemy_database_uri
+# DATABASE_URL = 'sqlite+aiosqlite:///:memory:'
+DATABASE_URL = settings.test_async_sqlalchemy_database_uri
 TESTCLIENT_BASE_URL = 'http://test'
-engine = create_async_engine(DATABASE_URL)
-TestSession = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+async_engine = create_async_engine(DATABASE_URL, pool_size=100, pool_timeout=30)
+TestSession = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
 
 # key: user_key
 user_data = {
@@ -22,10 +22,12 @@ user_data = {
 }
 
 # it's the same thing but given a different name
-
 async def override_yield_db():
     async with TestSession() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            await session.close()
 
 def override_google_login_response_dependency():
     return generate_random_mock_google_user() # creates a random GoogleAuthUserInfo object
