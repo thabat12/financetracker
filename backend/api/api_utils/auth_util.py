@@ -3,6 +3,7 @@ import httpx
 from fastapi import HTTPException, Depends, Header
 from sqlalchemy import select, delete, asc
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel
 from typing import Optional
 import uuid
@@ -48,6 +49,7 @@ class CreateAccountReturn(BaseModel):
     message: MessageEnum
     user_id: str
 
+# this is a google-specific access token, not an authorization token
 class LoginGoogleRequest(BaseModel):
     access_token: str
 
@@ -160,9 +162,13 @@ async def create_account(new_user: CreateAccountRequest, link_id: str, session: 
         session.add(new_user)
         session.add(google_user)
         await session.commit()
+    # assume that the user is already trying to login
+    except IntegrityError as e:
+        logger.error(str(e))
+        raise HTTPException(status_code=500, detail=f'Database IntegrityError during create account') from e
     except Exception as e:
         logger.error(str(e))
-        raise HTTPException(status_code=500, detail='Database Operation Failed!') from e
+        raise HTTPException(status_code=500, detail=f'Database Operation Failed! {e}') from e
     
     return CreateAccountReturn(message=MessageEnum.CREATED, user_id=uuid)
 

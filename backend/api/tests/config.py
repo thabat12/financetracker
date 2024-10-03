@@ -3,11 +3,13 @@ from fastapi.testclient import TestClient
 from api.api import app
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import create_engine
 from api.crypto.crypto import encrypt_data, encrypt_float, encrypt_integer
 from api.tests.data.userdata import generate_random_mock_google_user
 
-DATABASE_URL = 'sqlite+aiosqlite:///:memory:'
+from api.config import settings
+
+# DATABASE_URL = 'sqlite+aiosqlite:///:memory:'
+DATABASE_URL = settings.test_sqlalchemy_database_uri
 TESTCLIENT_BASE_URL = 'http://test'
 engine = create_async_engine(DATABASE_URL)
 TestSession = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)

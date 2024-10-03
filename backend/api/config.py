@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 class Settings(BaseSettings):
     async_sqlalchemy_database_uri: str
     sqlalchemy_database_uri: str
+    test_sqlalchemy_database_uri: str
     test_plaid_url: str
     test_plaid_client_id: str
     plaid_secret: str
