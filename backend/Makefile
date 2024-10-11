@@ -31,4 +31,4 @@ clear_db:
 	@python -m db.init_db
 
 test_api:
-	@python -m pytest -v -s
+	@python -m pytest -v -s --log-cli-level=ERROR
