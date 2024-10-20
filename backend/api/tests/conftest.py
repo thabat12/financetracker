@@ -24,25 +24,7 @@ from api.routes.auth import load_google_login_response_dependency
 async_engine = create_async_engine(DATABASE_URL, pool_size=200, pool_timeout=30)
 pool_size_lock = Lock()
 pool_size = 0
-
-# @event.listens_for(async_engine.sync_engine, "engine_connect")
-# def connect_listener(connection):
-#     logger.error("engine connection")
-#     global pool_size
-#     pool_size += 1
-
-# @event.listens_for(async_engine.sync_engine, "engine_disposed")
-# def disposed_listener(engine):
-#     logger.error("engine disconnection")
-#     global pool_size
-#     pool_size -= 1
-
-
-async def hanging_connections(async_engine):
-    async with async_engine.begin() as conn:
-        # Example SQL to count active connections
-        result = await conn.execute("SELECT count(*) FROM pg_stat_activity WHERE state = 'active'")
-        return result.scalar() > 0  # Returns True if there are active connections
+shared_override_yield_db = None
 
 @pytest.fixture(scope='function')
 async def setup_test_environment_fixture():
@@ -53,7 +35,9 @@ async def setup_test_environment_fixture():
         async with TestSession() as session:
             yield session
             await session.commit()
-            logger.error("my connection is closing now!")
+    
+    # allow the testing scripts to access this new depdendency
+    shared_override_yield_db = override_yield_db
     
     # Override dependencies
     app.dependency_overrides[yield_db] = override_yield_db

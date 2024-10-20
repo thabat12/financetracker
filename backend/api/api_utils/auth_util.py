@@ -1,6 +1,6 @@
 import os
 import httpx
-from fastapi import HTTPException, Depends, Header
+from fastapi import HTTPException, Depends, Header, Request
 from sqlalchemy import select, delete, asc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -17,6 +17,7 @@ import secrets
 from db.models import *
 from api.config import settings, logger, yield_db
 from api.crypto.crypto import encrypt_data, decrypt_data, db_key_bytes
+from api.concurrency.db_lock import acquire_db_session_lock, release_db_session_lock
 
 '''
     Constants: global variables that affect certain behaviors of functions that modify the database,
@@ -173,77 +174,116 @@ async def create_account(new_user: CreateAccountRequest, link_id: str, session: 
 
     return CreateAccountReturn(message=MessageEnum.CREATED, user_id=uuid)
 
-async def login_google_db_operation(user_info: GoogleAuthUserInfo, session: AsyncSession) -> LoginGoogleReturn:
+'''
+    create_google_db_operation:
+        to allow for better concurrency in database operations, separating up the create and login
+        google database operations allow there to be no need for locking in the database or any other
+        distributed locking solution.
+
+        this operation works under the assumption that the user does not currently exist on the
+        database, and any errors to this operation will easily be detected
+'''
+async def create_google_db_operation(user_info: GoogleAuthUserInfo, session: AsyncSession) -> CreateAccountReturn:
     logger.info('/auth/login_google_db_operation')
     result: LoginGoogleReturn = LoginGoogleReturn()
 
+    # under the assumption that the user does not exist
     google_user: GoogleUser = await session.get(GoogleUser, user_info.id)
+
+    if google_user:
+        raise HTTPException(detail='Google user already exists! Do not create a user for already existing', status_code=500)
     
     # I have to create the google user
+    logger.info('/auth/login_google_db_operation: user does not exist, creating account')
+    user_name_info = user_info.name.strip().split(' ')
+    if len(user_name_info) == 1:
+        first_name = user_name_info[0]
+        last_name = None
+    elif len(user_name_info) > 1:
+        first_name, last_name = user_name_info[0], user_name_info[-1]
+
+    create_account_request = CreateAccountRequest(
+        first_name=first_name,
+        last_name=last_name,
+        user_email=user_info.email,
+        user_profile_picture=user_info.picture,
+        user_type='google'
+    )
+
+    response: CreateAccountReturn = await create_account(new_user=create_account_request, link_id=user_info.id, session=session)
+    result.message = MessageEnum.CREATED
+    result.user_id = response.user_id
+
+'''
+    login_google_db_operation:
+        login will retrieve the user details and verify that the current user exists on the database.
+        this will retrieve the user id that is used for identification in the application.
+
+'''
+async def login_google_db_operation(user_info: GoogleAuthUserInfo, session: AsyncSession) -> CreateAccountReturn:
+    logger.info('/auth/login_google_db_operation')
+    result: LoginGoogleReturn = LoginGoogleReturn()
+    google_user: GoogleUser = await session.get(GoogleUser, user_info.id)
+
     if not google_user:
-        logger.info('/auth/login_google_db_operation: user does not exist, creating account')
-        user_name_info = user_info.name.strip().split(' ')
-        if len(user_name_info) == 1:
-            first_name = user_name_info[0]
-            last_name = None
-        elif len(user_name_info) > 1:
-            first_name, last_name = user_name_info[0], user_name_info[-1]
-
-        create_account_request = CreateAccountRequest(
-            first_name=first_name,
-            last_name=last_name,
-            user_email=user_info.email,
-            user_profile_picture=user_info.picture,
-            user_type='google'
-        )
-
-        response: CreateAccountReturn = await create_account(new_user=create_account_request, link_id=user_info.id, session=session)
-        result.message = MessageEnum.CREATED
-        result.user_id = response.user_id
-    # user already exists so return the state of this user
-    else:
-        cur_user_id: str = google_user.user_id
-        logger.info(f'/auth/login_google_db_operation: {cur_user_id} google user already exists')
-        cur_user: User = await session.get(User, cur_user_id)
-
-        cur_user.last_login_at = datetime.now()
-        user_id = cur_user.user_id
-
-        await session.commit()
-
-        result.message = MessageEnum.LOGIN
-        result.user_id = user_id
+        raise HTTPException(detail='Google user does not exist!', status_code=500)
     
+    cur_user_id: str = google_user.user_id
+    logger.info(f'/auth/login_google_db_operation: {cur_user_id} google user already exists')
+    cur_user: User = await session.get(User, cur_user_id)
+
+    cur_user.last_login_at = datetime.now()
+    user_id = cur_user.user_id
+
+    await session.commit()
+
+    result.message = MessageEnum.LOGIN
+    result.user_id = user_id
+
     return result
 
-async def create_auth_session(user_id: str, session: AsyncSession):
+
+async def create_auth_session(user_id: str, session: AsyncSession) -> str:
     logger.info('/auth/create_auth_session')
     auth_token = generate_token(user_id=user_id)
 
-    session: AsyncSession
-    smt = select(AuthSession.auth_session_token_id).where(AuthSession.user_id == user_id).order_by(asc(AuthSession.session_expiry_time))
-    cur_sessions = await session.scalars(smt)
-    cur_sessions = cur_sessions.all()
+    # !!! acquiring database lock to ensure CS logic is correct
+    unique_key = f'{user_id}:create_auth_session'
 
-    if cur_sessions:
-        if len(cur_sessions) == 3:
-            logger.info(f'/auth/create_auth_session: {user_id} deleting oldest auth session')
-            to_del_id = cur_sessions[0]
+    try:
+        await acquire_db_session_lock(unique_key=unique_key, session=session)
+        logger.info('now i am inside the CS and performing some tasks')
+        session: AsyncSession
+        smt = select(AuthSession.auth_session_token_id).where(AuthSession.user_id == user_id).order_by(asc(AuthSession.session_expiry_time))
+        cur_sessions = await session.scalars(smt)
+        cur_sessions = cur_sessions.all()
 
-            smt = delete(AuthSession).where(AuthSession.auth_session_token_id == to_del_id)
-            await session.execute(smt)
-        elif len(cur_sessions) > 3:
-            raise Exception('oops! somehow, there are more than 3 sessions on the table for user', user_id)
-    
-    # after all the corresponding deletes, create the new auth session
-    logger.info(f'/auth/create_auth_session: {user_id} creating auth session for')
-    auth_session = AuthSession(auth_session_token_id=auth_token, \
-        session_expiry_time=datetime.now() + timedelta(minutes=30), user_id=user_id)
-    
-    session.add(auth_session)
-    await session.commit()
+        if cur_sessions:
+            if len(cur_sessions) == 3:
+                logger.info(f'/auth/create_auth_session: {user_id} deleting oldest auth session')
+                to_del_id = cur_sessions[0]
 
-    return auth_token
+                smt = delete(AuthSession).where(AuthSession.auth_session_token_id == to_del_id)
+                await session.execute(smt)
+            elif len(cur_sessions) > 3:
+                await release_db_session_lock(unique_key=unique_key, session=session)
+                raise Exception('oops! somehow, there are more than 3 sessions on the table for user', user_id)
+        
+        # after all the corresponding deletes, create the new auth session
+        logger.info(f'/auth/create_auth_session: {user_id} creating auth session for')
+        auth_session = AuthSession(auth_session_token_id=auth_token, \
+            session_expiry_time=datetime.now() + timedelta(minutes=30), user_id=user_id)
+        
+        session.add(auth_session)
+        await session.commit()
+
+        logger.info('i have just finished the CS and done with my tasks!')
+    finally:
+        # !!! releasing the database lock
+        await release_db_session_lock(unique_key=unique_key, session=session)
+        logger.info('just released the db session lock')
+        await session.commit()
+        return auth_token
 
 '''
     HTTP client operations: calling the google api requires some httpx context, which is also handled
