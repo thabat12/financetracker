@@ -21,10 +21,7 @@ from api.tests.config import async_engine, DATABASE_URL, override_google_login_r
 from api.routes.auth import load_google_login_response_dependency
 
 # shared
-async_engine = create_async_engine(DATABASE_URL, pool_size=200, pool_timeout=30)
-pool_size_lock = Lock()
-pool_size = 0
-shared_override_yield_db = None
+async_engine = create_async_engine(DATABASE_URL, pool_size=100, pool_timeout=30)
 
 @pytest.fixture(scope='function')
 async def setup_test_environment_fixture():
@@ -36,8 +33,6 @@ async def setup_test_environment_fixture():
             yield session
             await session.commit()
     
-    # allow the testing scripts to access this new depdendency
-    shared_override_yield_db = override_yield_db
     
     # Override dependencies
     app.dependency_overrides[yield_db] = override_yield_db

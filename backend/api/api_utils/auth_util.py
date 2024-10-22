@@ -17,7 +17,7 @@ import secrets
 from db.models import *
 from api.config import settings, logger, yield_db
 from api.crypto.crypto import encrypt_data, decrypt_data, db_key_bytes
-from api.concurrency.db_lock import acquire_db_session_lock, release_db_session_lock
+from api.concurrency.db_lock import acquire_db_session_lock, release_db_session_lock, acquire_db_transaction_lock
 
 '''
     Constants: global variables that affect certain behaviors of functions that modify the database,
@@ -249,48 +249,40 @@ async def create_auth_session(user_id: str, session: AsyncSession) -> str:
 
     # !!! acquiring database lock to ensure CS logic is correct
     unique_key = f'{user_id}:create_auth_session'
+    await acquire_db_transaction_lock(unique_key=unique_key, session=session)
 
-    try:
-        await acquire_db_session_lock(unique_key=unique_key, session=session)
-        logger.info('now i am inside the CS and performing some tasks')
-        session: AsyncSession
-        smt = select(AuthSession.auth_session_token_id).where(AuthSession.user_id == user_id).order_by(asc(AuthSession.session_expiry_time))
-        cur_sessions = await session.scalars(smt)
-        cur_sessions = cur_sessions.all()
+    session: AsyncSession
+    smt = select(AuthSession.auth_session_token_id).where(AuthSession.user_id == user_id).order_by(asc(AuthSession.session_expiry_time))
+    cur_sessions = await session.scalars(smt)
+    cur_sessions = cur_sessions.all()
 
-        if cur_sessions:
-            if len(cur_sessions) == 3:
-                logger.info(f'/auth/create_auth_session: {user_id} deleting oldest auth session')
-                to_del_id = cur_sessions[0]
+    if cur_sessions:
+        if len(cur_sessions) == 3:
+            logger.info(f'/auth/create_auth_session: {user_id} deleting oldest auth session')
+            to_del_id = cur_sessions[0]
 
-                smt = delete(AuthSession).where(AuthSession.auth_session_token_id == to_del_id)
-                await session.execute(smt)
-            elif len(cur_sessions) > 3:
-                await release_db_session_lock(unique_key=unique_key, session=session)
-                raise Exception('oops! somehow, there are more than 3 sessions on the table for user', user_id)
-        
-        # after all the corresponding deletes, create the new auth session
-        logger.info(f'/auth/create_auth_session: {user_id} creating auth session for')
-        auth_session = AuthSession(auth_session_token_id=auth_token, \
-            session_expiry_time=datetime.now() + timedelta(minutes=30), user_id=user_id)
-        
-        session.add(auth_session)
-        await session.commit()
+            smt = delete(AuthSession).where(AuthSession.auth_session_token_id == to_del_id)
+            await session.execute(smt)
+        elif len(cur_sessions) > 3:
+            # this statement should really never be reached
+            # await release_db_session_lock(unique_key=unique_key, session=session)
+            raise Exception('oops! somehow, there are more than 3 sessions on the table for user', user_id)
+    
+    # after all the corresponding deletes, create the new auth session
+    logger.info(f'/auth/create_auth_session: {user_id} creating auth session for')
+    auth_session = AuthSession(auth_session_token_id=auth_token, \
+        session_expiry_time=datetime.now() + timedelta(minutes=30), user_id=user_id)
+    
+    session.add(auth_session)
+    await session.commit()
 
-        logger.info('i have just finished the CS and done with my tasks!')
-    finally:
-        # !!! releasing the database lock
-        await release_db_session_lock(unique_key=unique_key, session=session)
-        logger.info('just released the db session lock')
-        await session.commit()
-        return auth_token
+    return auth_token
 
 '''
     HTTP client operations: calling the google api requires some httpx context, which is also handled
         apart from the actual fastapi calling logic
 
 '''
-
 async def load_google_login_response(request: LoginGoogleRequest, client: httpx.AsyncClient):
     logger.info(f'auth/login_google: requesting google to validate access token')
     response = await client.get(f'{GOOGLE_AUTH_USERINFO_URL}?access_token={request.access_token}')

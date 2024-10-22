@@ -1,5 +1,5 @@
 import httpx
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import *
@@ -9,6 +9,7 @@ from api.api_utils.auth_util import load_google_login_response
 from api.api_utils.auth_util import login_google_db_operation
 from api.api_utils.auth_util import create_google_db_operation
 from api.api_utils.auth_util import create_auth_session
+from api.api_utils.data_util import db_update_all_data_asynchronously
 
 
 '''
@@ -79,15 +80,20 @@ async def create_auth_session_dependency(
 # SEND: the endpoint is only bothered with returning results, and nothing else
 @auth_router.post('/login_google')
 async def login_google(
+    background_tasks: BackgroundTasks,
     user_info: GoogleAuthUserInfo = Depends(load_google_login_response_dependency),
     google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)) -> LoginGoogleResponse:
+
+    # a little confusing (TODO name changes definitely required), but update information on login
+    background_tasks.add_task(db_update_all_data_asynchronously, google_auth_user_info.user_id)
+
     logger.info('auth/login_google')
     
     return google_auth_user_info
 
 @auth_router.post('/create_google')
 async def create_google(
-    user_info: GoogleAuthUserInfo = Depends(load_google_login_response_dependency),
+    _: GoogleAuthUserInfo = Depends(load_google_login_response_dependency),
     google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)) -> LoginGoogleResponse:
     logger.info('auth/create_google')
     logger.info(google_auth_user_info)

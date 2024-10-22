@@ -77,7 +77,7 @@ function LinkPlaidPage() {
             }, 
             {
                 headers: {
-                    "Authorization": `Bearer ${authorizationToken}`,
+                "Authorization": `Bearer ${authorizationToken}`,
                     "Content-Type": "application/json"
                 }
             }).then(

@@ -8,7 +8,7 @@ from sqlalchemy import select, update, case, delete, text, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 
-from api.config import settings, logger
+from api.config import settings, logger, yield_db, yield_client
 from api.api_utils.auth_util import verify_token
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data, encrypt_float, decrypt_float
 from db.models import *
@@ -162,6 +162,7 @@ async def db_get_transactions(
     
     all_transactions = map(lambda t: decrypt_transaction_data(transaction=t, user_key=user_key), \
                            all_transactions)
+    all_transactions = list(all_transactions)
     
     return GetTransactionsResponse(message=GetTransactionsResponseEnum.SUCCESS, transactions=all_transactions)
 
@@ -199,18 +200,21 @@ async def db_get_access_key_updates(
     all_institutions: List[Institution] = await db_get_all_institution_data(institution_ids=institution_ids, \
                                                                             session=session)
     
-    # ensure reordering of all institutions
-    all_institutions: List[Institution] = reorder_institutions_helper(all_institutions=all_institutions)
+    # ensure reordering of all institutions to correspond with access keys
+    all_institutions: List[Institution] = reorder_institutions_helper(institution_ids=institution_ids, \
+                                                                      all_institutions=all_institutions)
 
     return (access_keys, all_institutions)
 
 # helper function for db_update_transactions
 async def plaid_get_refreshed_transactions(
-        user_access_key: str,
-        transactions_sync_cursor: str,
+        access_key: AccessKey,
+        user_key: bytes,
         client: httpx.AsyncClient
     ) -> tuple[List[PlaidTransaction], ...]:
 
+    decrypted_access_key: str = decrypt_access_key(access_key=access_key, user_key=user_key)
+    transactions_sync_cursor = access_key.transactions_sync_cursor
     added, modified, removed = [], [], []
 
     for _ in range(20):
@@ -220,7 +224,7 @@ async def plaid_get_refreshed_transactions(
             json={
                 'client_id': settings.test_plaid_client_id,
                 'secret': settings.plaid_secret,
-                'access_token': user_access_key,
+                'access_token': decrypted_access_key,
                 'cursor': transactions_sync_cursor,
                 'count': 500
             }
@@ -236,6 +240,9 @@ async def plaid_get_refreshed_transactions(
 
         if not resp['has_more']:
             break
+
+    # set the access key's transaction sync cursor and on next commit the result will stick
+    access_key.transactions_sync_cursor = transactions_sync_cursor
 
     return added, modified, removed
 
@@ -308,17 +315,17 @@ async def db_update_transactions(
         user_key: bytes,
         all_institutions: List[Institution],
         access_keys: List[AccessKey],
-        session: AsyncSession
+        session: AsyncSession,
+        client: httpx.AsyncClient
     ) -> None:
     
     for cur_institution, cur_access_key in zip(all_institutions, access_keys):
-        decrypted_access_key: str = decrypt_access_key(cur_access_key.access_key, user_key=user_key)
-
         if not cur_institution.supports_transactions:
             return
         
-        added, modified, removed = await plaid_get_refreshed_transactions(user_access_key=decrypted_access_key, \
-                                            transactions_sync_cursor=cur_access_key.transactions_sync_cursor)
+        # note thhat this function also modifies the transactions_sync_cursor in the database
+        added, modified, removed = await plaid_get_refreshed_transactions(
+            user_access_key=cur_access_key, user_key=user_key, client=client, session=session)
         
         for ind, a in enumerate(added):
             added[ind] = map_plaid_transaction_to_transaction(plaid_transaction=a, cur_user=cur_user, \
@@ -426,10 +433,15 @@ async def plaid_get_refreshed_accounts(
 async def db_update_accounts(
         cur_user: str, 
         user_key: bytes,
-        refreshed_account_data: List[PlaidAccount],
+        access_keys: List[AccessKey],
         all_institutions: List[Institution],
-        session: AsyncSession
+        session: AsyncSession,
+        client: httpx.AsyncClient
     ) -> None:
+
+    refreshed_account_data: List[PlaidAccount] = None
+    refreshed_account_data = await plaid_get_refreshed_accounts(user_key=user_key, user_access_keys=access_keys, \
+                                         all_institutions=all_institutions, client=client)
 
     smt = select(Account.account_id).where(and_(Account.user_id == cur_user, \
                                                 Account.institution_id.in_(all_institutions)))
@@ -510,3 +522,40 @@ async def db_get_accounts(
                            all_accounts)
     
     return GetAccountsResponse(message=GetAccountsResponseEnum.SUCCESS, accounts=all_accounts)
+
+
+'''
+    Asynchronous DB updates: on every login and link account, there will be an asynchronous
+        database update triggered. this will simply go over all the current access keys that need
+        to be updated by the user, updates them, and then sets the corresponding data on access keys
+        to their respective values.
+'''
+async def db_update_transaction_account_sync(access_keys: List[AccessKey], session: AsyncSession) -> None:
+    updated_time = datetime.now()
+
+    for access_key in access_keys:
+        access_key.last_transactions_account_sync = updated_time
+
+    await session.commit()
+
+async def db_update_all_data_asynchronously(cur_user: str):
+    
+    async for session in yield_db():
+
+        user_key: bytes = decrypt_user_key(cur_user=cur_user, session=session)
+
+        access_keys, institutions = await db_get_access_key_updates(cur_user=cur_user, session=session)
+        access_keys: list[AccessKey]
+        institutions: list[Institution]
+
+        
+        async for client in yield_client():
+        
+            # update transactions & accounts with all the necessary data required
+            await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
+                                         access_keys=access_keys, session=session, client=client)
+            await db_update_accounts(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
+                                    all_institutions=institutions, session=session, client=client)
+            
+            await db_update_transaction_account_sync(access_keys=access_keys, session=session)
+            

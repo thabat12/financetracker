@@ -1,5 +1,5 @@
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import logger, yield_db, yield_client
@@ -8,6 +8,7 @@ from api.api_utils.plaid_util import LinkAccountRequest, LinkAccountResponse, Li
 from api.api_utils.auth_util import verify_token
 from api.api_utils.plaid_util import db_update_institution_details, plaid_get_public_token, \
                                     exchange_public_token, update_user_access_key
+from api.api_utils.data_util import db_update_all_data_asynchronously
 
 
 '''
@@ -69,6 +70,11 @@ from api.api_utils.plaid_util import db_update_institution_details, plaid_get_pu
 
 plaid_router = APIRouter()
 
+# CACHED SESSION
+async def session_dependency(session=Depends(yield_db)) -> AsyncSession:
+    logger.info("SESSION DEPENDENCY CREATED NEW SESSION")
+    return session
+
 async def verify_token_depdendency(cur_user: tuple[bool, str] = Depends(verify_token)) -> str:
     logger.info(f"verify_token_dependency called for user: {cur_user[1]}")
     return cur_user[1]
@@ -76,7 +82,7 @@ async def verify_token_depdendency(cur_user: tuple[bool, str] = Depends(verify_t
 async def db_update_institution_details_dependency(
         request: LinkAccountRequest, 
         cur_user: str = Depends(verify_token_depdendency),
-        session: AsyncSession = Depends(yield_db) ) -> Institution:
+        session: AsyncSession = Depends(session_dependency) ) -> Institution:
     
     logger.info(f"db_update_institution_details_dependency called for user: {cur_user}, request: {request}")
     new_ins: Institution = await db_update_institution_details(request=request, session=session)
@@ -104,14 +110,21 @@ async def db_update_user_access_key_dependency(
         access_key: str = Depends(plaid_exchange_public_token_dependency), 
         cur_user: str = Depends(verify_token_depdendency),
         ins_details: Institution = Depends(db_update_institution_details_dependency),
-        session: AsyncSession = Depends(yield_db)) -> None:
+        session: AsyncSession = Depends(session_dependency)) -> None:
     
     logger.info(f"db_update_user_access_key_dependency called for user: {cur_user}, institution: {ins_details.name}")
     await update_user_access_key(access_key=access_key, cur_user=cur_user, ins_details=ins_details, session=session)
 
-# Process, Process, Load, Load, Return
+# Process, Process, Load, Load, Return, (and a special background task to update data asynchronously)
 # takes in a LinkAccountRequest model as input
 @plaid_router.post('/link_account')
-async def link_account(dep = Depends(db_update_user_access_key_dependency), cur_user: str = Depends(verify_token_depdendency)) -> LinkAccountResponse:
+async def link_account(
+    background_tasks: BackgroundTasks,
+    _ = Depends(db_update_user_access_key_dependency), 
+    cur_user: str = Depends(verify_token_depdendency)) -> LinkAccountResponse:
     logger.info(f'/plaid/link_account: endpoint for user {cur_user} called')
+
+    # fire off background task
+    background_tasks.add_task(db_update_all_data_asynchronously, cur_user)
+
     return LinkAccountResponse(message=LinkAccountResponseEnum.SUCCESS)

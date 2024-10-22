@@ -30,14 +30,14 @@ from db.models import *
 app.include_router(auth_router, prefix='/auth')
 app.include_router(plaid_router, prefix='/plaid')
 
-@pytest.mark.skip
+# @pytest.mark.skip
 @pytest.mark.asyncio
 async def test_one_google_login(setup_test_environment_fixture):
     async for _ in setup_test_environment_fixture:
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
             await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
 
-@pytest.mark.skip
+# @pytest.mark.skip
 @pytest.mark.asyncio
 async def test_10_concurrent_google_logins(setup_test_environment_fixture):
     async for _ in setup_test_environment_fixture:
@@ -52,7 +52,7 @@ async def test_10_concurrent_google_logins(setup_test_environment_fixture):
             login_results = list(map(lambda i: i.json(), login_results))
         assert len(login_results) == N_USERS
 
-@pytest.mark.skip
+# @pytest.mark.skip
 @pytest.mark.asyncio
 async def test_google_login_twice(setup_test_environment_fixture):
     async for _ in setup_test_environment_fixture:
@@ -70,7 +70,7 @@ async def test_google_login_twice(setup_test_environment_fixture):
             response = response.json()
             assert response['account_status'] == 'login'
 
-@pytest.mark.skip
+# @pytest.mark.skip
 @pytest.mark.asyncio
 async def test_google_single_user_100_sequential_logins(setup_test_environment_fixture):
     async for _ in setup_test_environment_fixture:
@@ -108,5 +108,3 @@ async def test_google_single_user_100_concurrent_logins(setup_test_environment_f
             tasks = [client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={}) for _ in range(N)]
             results = await asyncio.gather(*tasks)
             results = [i.json() for i in results]
-
-        num_created, num_login = 0, 0
