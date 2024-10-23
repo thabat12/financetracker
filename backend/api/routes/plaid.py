@@ -90,7 +90,7 @@ async def db_update_institution_details_dependency(
 
 async def plaid_get_public_token_dependency(
         ins_details: Institution = Depends(db_update_institution_details_dependency), 
-        cur_user: str = Depends(verify_token),
+        cur_user: str = Depends(verify_token_depdendency),
         client: httpx.AsyncClient = Depends(yield_client)) -> str:
     
     logger.info(f"plaid_get_public_token_dependency called for user: {cur_user}, institution: {ins_details.name}")
@@ -125,10 +125,10 @@ async def db_update_user_access_key_dependency(
 
 async def db_update_all_data_asynchronously_dependency(
         background_tasks: BackgroundTasks,
+        _ = Depends(db_update_user_access_key_dependency),
         session: AsyncSession = Depends(yield_db),
         client: httpx.AsyncClient = Depends(yield_client),
-        cur_user: str = Depends(verify_token),
-        _ = Depends(db_update_user_access_key_dependency)) -> None:
+        cur_user: str = Depends(verify_token_depdendency)) -> None:
     '''
         On every link account operation, there is a guarantee that the access token does not
         have any data initialized yet. So it is safe to assume that an update is necessary for
@@ -141,7 +141,7 @@ async def db_update_all_data_asynchronously_dependency(
 @plaid_router.post('/link_account')
 async def link_account(
     # background_tasks: BackgroundTasks,
-    _ = Depends(db_update_user_access_key_dependency), 
+    _ = Depends(db_update_all_data_asynchronously_dependency), 
     cur_user: str = Depends(verify_token_depdendency)) -> LinkAccountResponse:
     logger.info(f'/plaid/link_account: endpoint for user {cur_user} called')
 

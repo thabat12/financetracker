@@ -82,8 +82,8 @@ async def setup_test_environment_fixture():
     
     print('cleaning up')
     # clear all database tables
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    # async with async_engine.begin() as conn:
+    #     await conn.run_sync(Base.metadata.drop_all)
 
     await async_engine.dispose()
 
@@ -91,27 +91,28 @@ async def setup_test_environment_fixture():
     app.dependency_overrides.clear()
 
 @pytest.fixture(scope='function')
-async def link_plaid_environment_fixture():
+def link_plaid_environment_fixture():
     '''
         Ensure that the link plaid endpoint also updates the user data synchronously to prevent any
         asyncio context being lost during operation.
     '''
-
+    logger.info('link_plaid_environment_fixture')
     from api.routes.plaid import db_update_all_data_asynchronously_dependency
     from api.routes.plaid import db_update_user_access_key_dependency
-    from api.routes.plaid import verify_token
+    from api.routes.plaid import verify_token_depdendency
 
     async def override_db_update_all_data_asynchronously_dependency(
-        background_tasks: BackgroundTasks,
         session: AsyncSession = Depends(yield_db),
         client: httpx.AsyncClient = Depends(yield_client),
-        cur_user: str = Depends(verify_token),
+        cur_user: str = Depends(verify_token_depdendency),
         _ = Depends(db_update_user_access_key_dependency)) -> None:
         '''
             On every link account operation, there is a guarantee that the access token does not
             have any data initialized yet. So it is safe to assume that an update is necessary for
             the access key.
         '''
-        background_tasks.add_task(db_update_all_data_asynchronously, cur_user, session, client)
+        logger.info('overriding the link plaid data updates to be synchronous')
+        await db_update_all_data_asynchronously(cur_user=cur_user, session=session, client=client)
 
     app.dependency_overrides[db_update_all_data_asynchronously_dependency] = override_db_update_all_data_asynchronously_dependency
+    logger.info('dependency overriden')

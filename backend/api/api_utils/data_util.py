@@ -213,13 +213,13 @@ async def plaid_get_refreshed_transactions(
         client: httpx.AsyncClient
     ) -> tuple[List[PlaidTransaction], ...]:
 
-    decrypted_access_key: str = decrypt_access_key(access_key=access_key, user_key=user_key)
+    decrypted_access_key: str = decrypt_access_key(access_key=access_key.access_key, user_key=user_key)
     transactions_sync_cursor = access_key.transactions_sync_cursor
     added, modified, removed = [], [], []
 
     for _ in range(20):
         resp = await client.post(
-            f'{settings.test_plaid_url}/transactions/sync',
+            url=f'{settings.test_plaid_url}/transactions/sync',
             headers={'Content-Type': 'application/json'},
             json={
                 'client_id': settings.test_plaid_client_id,
@@ -231,6 +231,12 @@ async def plaid_get_refreshed_transactions(
         )
 
         resp = resp.json()
+        
+        # wait at least 10 seconds before pulling is ready
+        if resp['transactions_update_status'] != 'HISTORICAL_UPDATE_COMPLETE':
+            logger.info('status is not ready yet, allowing for some wait time')
+            await asyncio.sleep(10)
+            continue # try again
 
         added.extend(list(map(lambda r: PlaidTransaction(**r), resp['added'])))
         modified.extend(list(map(lambda r: PlaidTransaction(**r), resp['modified'])))
@@ -310,6 +316,51 @@ async def db_remove_plaid_transaction(
 def decrypt_access_key(access_key: bytes, user_key: bytes) -> str:
     return decrypt_data(access_key, user_key).decode('utf-8')
 
+async def db_batch_update_merchants_data(
+    added: List[PlaidTransaction],
+    modified: List[PlaidTransaction],
+    removed: List[PlaidTransaction],
+    session: AsyncSession  
+    ) -> None:
+    '''
+        using a lazy-pattern of updating merchant data based on all the transactions
+        that the current transactions/sync endpoint has returned. all merchant data
+        is stored on the transaction objects.
+
+        streamlining 
+    '''
+    logger.info('db_batch_update_merchants_data')
+    merchant_data = {}
+    for transaction in [*added, *modified, *removed]:
+        if transaction.merchant_entity_id is not None and \
+            transaction.merchant_entity_id not in merchant_data:
+
+            merchant_data[transaction.merchant_entity_id] = {
+                'merchant_name': transaction.merchant_name,
+                'merchant_logo': transaction.logo_url
+            }
+
+    # map the parameters & values to the sql injection statement properly
+    params = {}
+    for merchant_id, data in merchant_data.items():
+        params[f'{merchant_id}_merchant_name'] = data['merchant_name']
+        params[f'{merchant_id}_merchant_logo'] = data['merchant_logo']
+
+    values = []
+    for merchant_id in merchant_data.keys():
+        values.append(f'(\'{merchant_id}\', :{merchant_id}_merchant_name, :{merchant_id}_merchant_logo)')
+    values_str = ', '.join(values)
+
+    # custom SQL injection
+    smt = text(
+        f'INSERT INTO {Merchant.__tablename__} (merchant_id, merchant_name, merchant_logo)' + \
+        f' VALUES {values_str} ON CONFLICT (merchant_id) DO UPDATE SET' + \
+        ' merchant_name = EXCLUDED.merchant_name, merchant_logo = EXCLUDED.merchant_logo;')
+
+    # logger.info(smt)
+    await session.execute(smt, params)
+    await session.commit()
+
 async def db_update_transactions(
         cur_user: str,
         user_key: bytes,
@@ -325,7 +376,11 @@ async def db_update_transactions(
         
         # note thhat this function also modifies the transactions_sync_cursor in the database
         added, modified, removed = await plaid_get_refreshed_transactions(
-            user_access_key=cur_access_key, user_key=user_key, client=client, session=session)
+            access_key=cur_access_key, user_key=user_key, client=client)
+        
+        # ensure that all merchant data is set
+        await db_batch_update_merchants_data(added=added, modified=modified, \
+                                             removed=removed, session=session)
         
         for ind, a in enumerate(added):
             added[ind] = map_plaid_transaction_to_transaction(plaid_transaction=a, cur_user=cur_user, \
@@ -442,9 +497,10 @@ async def db_update_accounts(
     refreshed_account_data: List[PlaidAccount] = None
     refreshed_account_data = await plaid_get_refreshed_accounts(user_key=user_key, user_access_keys=access_keys, \
                                          all_institutions=all_institutions, client=client)
+    all_institution_ids = [institution.institution_id for institution in all_institutions]
 
     smt = select(Account.account_id).where(and_(Account.user_id == cur_user, \
-                                                Account.institution_id.in_(all_institutions)))
+                                                Account.institution_id.in_(all_institution_ids)))
     existing_account_ids = await session.scalars(smt)
     existing_account_ids = set(existing_account_ids.all())
     
@@ -466,7 +522,8 @@ async def db_update_accounts(
  
 
     for i, na in enumerate(new_accounts):
-        new_accounts[i] = map_plaid_account_to_account(plaid_account=na, user_key=user_key)
+        new_accounts[i] = map_plaid_account_to_account(plaid_account=na, user_key=user_key, \
+                                                       cur_user=cur_user)
 
     session.add_all(new_accounts)
 
@@ -550,10 +607,10 @@ async def db_update_all_data_asynchronously(
     institutions: list[Institution]
 
     # update transactions & accounts with all the necessary data required
-    await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
-                                    access_keys=access_keys, session=session, client=client)
     await db_update_accounts(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
                             all_institutions=institutions, session=session, client=client)
+    await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
+                                    access_keys=access_keys, session=session, client=client)
     
     await db_update_transaction_account_sync(access_keys=access_keys, session=session)
             

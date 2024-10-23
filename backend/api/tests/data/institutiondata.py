@@ -36,8 +36,8 @@ _institution_metadata = {
 }
 
 def validate_institution(institution: Institution):
-    assert institution.name in _institution_metadata
-    record = _institution_metadata[institution.name]
+    assert institution.institution_id in _institution_metadata
+    record = _institution_metadata[institution.institution_id]
 
     assert institution.supports_transactions == record['supports_transactions']
     assert institution.supports_investments == record['supports_investments']

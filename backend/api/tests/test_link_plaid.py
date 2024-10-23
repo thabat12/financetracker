@@ -21,6 +21,7 @@ from api.routes.auth import auth_router, load_google_login_response_dependency
 from api.routes.plaid import plaid_router
 from api.tests.config import override_yield_db, TESTCLIENT_BASE_URL, async_engine
 from api.tests.conftest import logger
+from api.tests.conftest import link_plaid_environment_fixture
 from api.tests.data.userdata import PLAID_SANDBOX_INSTITUTION_IDS
 from api.tests.data.institutiondata import InstitutionIDs
 from api.tests.data.institutiondata import validate_institution
@@ -40,16 +41,14 @@ def client_task(authorization_token: str, ins_id: str, client: httpx.AsyncClient
                         },
                         json={'institution_id': ins_id})
 
-def validate_institution(institution: Institution):
-    pass
-
-
 async def link_1_transaction_account_verification():
     '''
         ensure:
             institution details are populated
             access key is updated to expected values
+            data for transactions and accounts properly populated
     '''
+    logger.info('link_1_transaction_account_verification')
     # database checking
     Session = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -73,12 +72,13 @@ async def link_1_transaction_account_verification():
             access_key: AccessKey = access_keys[0]
 
             # ensure the access key is as-expected
-            validate_access_key(access_key, plaid_bank_ins, )
+            validate_access_key(access_key, plaid_bank_ins)
 
+            # there should be a lot of data populated into the tables
 
 # @pytest.mark.skip
 @pytest.mark.asyncio
-async def test_link_1_transaction_account(setup_test_environment_fixture):
+async def test_link_1_transaction_account(link_plaid_environment_fixture, setup_test_environment_fixture):
     async for _ in setup_test_environment_fixture:
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
             # first get some users onto the database
@@ -92,9 +92,35 @@ async def test_link_1_transaction_account(setup_test_environment_fixture):
             
             await link_1_transaction_account_verification()
 
+async def link_multiple_accounts_to_same_institution_verification(N: int):
+    '''
+        helper db verification method for:
+            test_link_multiple_accounts_to_same_institution
+    '''
+    Session = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with Session() as session:
+        async with session.begin():
+            institutions = await session.scalars(select(Institution))
+            institutions = institutions.all()
+            
+            assert len(institutions) == 1
+
+            plaid_institution: Institution = institutions[0]
+            validate_institution(plaid_institution)
+
+            users = (await session.scalars(select(User))).all()
+            access_keys = (await session.scalars(select(AccessKey))).all()
+
+            assert len(users) == N
+            assert len(access_keys) == N
+
+            for access_key in access_keys:
+                validate_access_key(access_key)
+
 @pytest.mark.skip
 @pytest.mark.asyncio
-async def test_link_multiple_accounts_to_same_institution(setup_test_environment_fixture):
+async def test_link_multiple_accounts_to_same_institution(link_plaid_environment_fixture, setup_test_environment_fixture):
     async for _ in setup_test_environment_fixture:
         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
             result = await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
@@ -102,18 +128,13 @@ async def test_link_multiple_accounts_to_same_institution(setup_test_environment
             authorization_token = result['authorization_token']
 
             start = time.time()
-
             result = await client_task(authorization_token=authorization_token, \
                                         ins_id=InstitutionIDs.plaid_bank, client=client)
-            
             end = time.time()
-
             result = result.json()
-
             # very lax requirement of within 15 seconds
             assert end - start <= 15
             assert result['message'] == 'success'
-
             # now test with N = 10 other clients on the same institution
             N = 10
             clients = await asyncio.gather(*[client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={}) for _ in range(N)])
@@ -121,13 +142,10 @@ async def test_link_multiple_accounts_to_same_institution(setup_test_environment
             authorization_tokens = [c['authorization_token'] for c in clients]
             requests = [client_task(authorization_token=token, ins_id=InstitutionIDs.plaid_bank, client=client) \
                         for token in authorization_tokens]
-            
             start = time.time()
             results = await asyncio.gather(*requests)
             end = time.time()
-
             results = [r.json() for r in results]
-
             assert all([i['message'] == 'success' for i in results])
 
 @pytest.mark.skip
