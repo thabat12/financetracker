@@ -22,6 +22,9 @@ from api.routes.plaid import plaid_router
 from api.tests.config import override_yield_db, TESTCLIENT_BASE_URL, async_engine
 from api.tests.conftest import logger
 from api.tests.data.userdata import PLAID_SANDBOX_INSTITUTION_IDS
+from api.tests.data.institutiondata import InstitutionIDs
+from api.tests.data.institutiondata import validate_institution
+from api.tests.data.institutiondata import validate_access_key
 from db.models import *
 
 # client = TestClient(app=app)
@@ -37,11 +40,41 @@ def client_task(authorization_token: str, ins_id: str, client: httpx.AsyncClient
                         },
                         json={'institution_id': ins_id})
 
-class InstitutionIDs:
-    plaid_bank = 'ins_109508' # transactions & investments
-    first_platypus_bank = 'ins_109510' # transactions
-    tartan_bank = 'ins_109512' # transactions & investments
-    pnc = 'ins_13' # transactions & investments
+def validate_institution(institution: Institution):
+    pass
+
+
+async def link_1_transaction_account_verification():
+    '''
+        ensure:
+            institution details are populated
+            access key is updated to expected values
+    '''
+    # database checking
+    Session = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+
+    async with Session() as session:
+        async with session.begin():
+            # institution
+            institutions = await session.scalars(select(Institution))
+            institutions = institutions.all()
+
+            assert len(institutions) == 1
+            plaid_bank_ins: Institution = institutions[0]
+
+            # calls assert statements from here
+            validate_institution(plaid_bank_ins)
+
+            # access key
+            access_keys = await session.scalars(select(AccessKey))
+            access_keys = access_keys.all()
+
+            assert len(access_keys) == 1
+            access_key: AccessKey = access_keys[0]
+
+            # ensure the access key is as-expected
+            validate_access_key(access_key, plaid_bank_ins, )
+
 
 # @pytest.mark.skip
 @pytest.mark.asyncio
@@ -51,17 +84,15 @@ async def test_link_1_transaction_account(setup_test_environment_fixture):
             # first get some users onto the database
             result = await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
             result = result.json()
-            print(result)
-            authorization_token = result['authorization_token']
 
+            authorization_token = result['authorization_token']
 
             result = await client_task(authorization_token=authorization_token, \
                                        ins_id=InstitutionIDs.plaid_bank, client=client)
             
-            result = result.json()
-            print(result)
+            await link_1_transaction_account_verification()
 
-# @pytest.mark.skip
+@pytest.mark.skip
 @pytest.mark.asyncio
 async def test_link_multiple_accounts_to_same_institution(setup_test_environment_fixture):
     async for _ in setup_test_environment_fixture:
@@ -99,6 +130,7 @@ async def test_link_multiple_accounts_to_same_institution(setup_test_environment
 
             assert all([i['message'] == 'success' for i in results])
 
+@pytest.mark.skip
 @pytest.mark.asyncio
 async def test_link_1_account_to_multiple_institutions(setup_test_environment_fixture):
     print('is this even working?')

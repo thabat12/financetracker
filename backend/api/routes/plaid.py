@@ -101,6 +101,10 @@ async def plaid_exchange_public_token_dependency(
         public_token: str = Depends(plaid_get_public_token_dependency), 
         cur_user: str = Depends(verify_token_depdendency),
         client: httpx.AsyncClient = Depends(yield_client)) -> LinkAccountResponse:
+    '''
+        Given the link token, exchange it with the Plaid API to obtain the actual
+        public token, which will be set up in the database for the corresponding user.
+    '''
     
     logger.info(f"plaid_exchange_public_token_dependency called for user: {cur_user}, public token: {public_token}")
     access_token = await exchange_public_token(public_token=public_token, client=client)
@@ -111,20 +115,37 @@ async def db_update_user_access_key_dependency(
         cur_user: str = Depends(verify_token_depdendency),
         ins_details: Institution = Depends(db_update_institution_details_dependency),
         session: AsyncSession = Depends(session_dependency)) -> None:
+    '''
+        Populate the AccessKey record with the new public token that will be used for
+        future API calls.
+    '''
     
     logger.info(f"db_update_user_access_key_dependency called for user: {cur_user}, institution: {ins_details.name}")
     await update_user_access_key(access_key=access_key, cur_user=cur_user, ins_details=ins_details, session=session)
+
+async def db_update_all_data_asynchronously_dependency(
+        background_tasks: BackgroundTasks,
+        session: AsyncSession = Depends(yield_db),
+        client: httpx.AsyncClient = Depends(yield_client),
+        cur_user: str = Depends(verify_token),
+        _ = Depends(db_update_user_access_key_dependency)) -> None:
+    '''
+        On every link account operation, there is a guarantee that the access token does not
+        have any data initialized yet. So it is safe to assume that an update is necessary for
+        the access key.
+    '''
+    background_tasks.add_task(db_update_all_data_asynchronously, cur_user, session, client)
 
 # Process, Process, Load, Load, Return, (and a special background task to update data asynchronously)
 # takes in a LinkAccountRequest model as input
 @plaid_router.post('/link_account')
 async def link_account(
-    background_tasks: BackgroundTasks,
+    # background_tasks: BackgroundTasks,
     _ = Depends(db_update_user_access_key_dependency), 
     cur_user: str = Depends(verify_token_depdendency)) -> LinkAccountResponse:
     logger.info(f'/plaid/link_account: endpoint for user {cur_user} called')
 
     # fire off background task
-    background_tasks.add_task(db_update_all_data_asynchronously, cur_user)
+    # background_tasks.add_task(db_update_all_data_asynchronously, cur_user)
 
     return LinkAccountResponse(message=LinkAccountResponseEnum.SUCCESS)

@@ -52,7 +52,6 @@ async def login_google_db_operation_dependency(
     path = request.url.path
     if path == '/auth/login_google':
         result = await login_google_db_operation(user_info=user_info, session=session)
-
     elif path == '/auth/create_google':
         logger.info('creating user')
         await create_google_db_operation(user_info=user_info, session=session)
@@ -65,7 +64,6 @@ async def login_google_db_operation_dependency(
 
 # PROCESS: modify the auth session as a separate database operation
 async def create_auth_session_dependency(
-        user_info: GoogleAuthUserInfo = Depends(load_google_login_response_dependency),
         user_db: LoginGoogleReturn = Depends(login_google_db_operation_dependency),
         session: AsyncSession = Depends(session_dependency)) -> LoginGoogleResponse:
     logger.info('/auth/create_auth_session_dependency')
@@ -77,24 +75,28 @@ async def create_auth_session_dependency(
         account_status=user_db.message
     )
 
+# PROCESS: background task for registering an asynchronous dependency
+#           note that this will change in test environment to become synchronous
+#           because of pytest's limitations with their async test modules
+async def db_update_all_data_asynchronously_dependency(
+        background_tasks: BackgroundTasks,
+        session: AsyncSession = Depends(yield_db),
+        client: httpx.AsyncClient = Depends(yield_client),
+        google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)) -> None:
+    background_tasks.add_task(db_update_all_data_asynchronously, google_auth_user_info.user_id, session, client)
+
 # SEND: the endpoint is only bothered with returning results, and nothing else
 @auth_router.post('/login_google')
 async def login_google(
-    background_tasks: BackgroundTasks,
-    user_info: GoogleAuthUserInfo = Depends(load_google_login_response_dependency),
+    _: None = Depends(db_update_all_data_asynchronously_dependency),
     google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)) -> LoginGoogleResponse:
-
-    # a little confusing (TODO name changes definitely required), but update information on login
-    background_tasks.add_task(db_update_all_data_asynchronously, google_auth_user_info.user_id)
-
     logger.info('auth/login_google')
-    
     return google_auth_user_info
 
 @auth_router.post('/create_google')
 async def create_google(
-    _: GoogleAuthUserInfo = Depends(load_google_login_response_dependency),
-    google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)) -> LoginGoogleResponse:
+    google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)
+    ) -> LoginGoogleResponse:
     logger.info('auth/create_google')
     logger.info(google_auth_user_info)
     return google_auth_user_info

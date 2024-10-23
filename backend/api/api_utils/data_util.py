@@ -3,7 +3,7 @@ import asyncio
 from pydantic import BaseModel
 from datetime import timedelta
 from logging import Logger
-from fastapi import APIRouter, HTTPException, Header, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Header, BackgroundTasks, Depends
 from sqlalchemy import select, update, case, delete, text, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
@@ -124,8 +124,8 @@ class GetAccountsResponse(BaseModel):
 '''
 # use session object and the global key to identify the current user_key in bytes
 async def decrypt_user_key(cur_user: str, session: AsyncSession) -> bytes:
-    cur_user: User = await session.scalar(select(User.user_key).where(User.user_id == cur_user))
-    user_key: bytes = decrypt_data(cur_user.user_key, db_key_bytes)
+    cur_user_encrypted_key: bytes = await session.scalar(select(User.user_key).where(User.user_id == cur_user))
+    user_key: bytes = decrypt_data(cur_user_encrypted_key, db_key_bytes)
 
     return user_key
 
@@ -538,24 +538,22 @@ async def db_update_transaction_account_sync(access_keys: List[AccessKey], sessi
 
     await session.commit()
 
-async def db_update_all_data_asynchronously(cur_user: str):
+async def db_update_all_data_asynchronously(
+        cur_user: str, 
+        session: AsyncSession,
+        client: httpx.AsyncClient):
+    logger.info(f'cur_user: {cur_user}')
+    user_key: bytes = await decrypt_user_key(cur_user=cur_user, session=session)
+
+    access_keys, institutions = await db_get_access_key_updates(cur_user=cur_user, session=session)
+    access_keys: list[AccessKey]
+    institutions: list[Institution]
+
+    # update transactions & accounts with all the necessary data required
+    await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
+                                    access_keys=access_keys, session=session, client=client)
+    await db_update_accounts(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
+                            all_institutions=institutions, session=session, client=client)
     
-    async for session in yield_db():
-
-        user_key: bytes = decrypt_user_key(cur_user=cur_user, session=session)
-
-        access_keys, institutions = await db_get_access_key_updates(cur_user=cur_user, session=session)
-        access_keys: list[AccessKey]
-        institutions: list[Institution]
-
-        
-        async for client in yield_client():
-        
-            # update transactions & accounts with all the necessary data required
-            await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
-                                         access_keys=access_keys, session=session, client=client)
-            await db_update_accounts(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
-                                    all_institutions=institutions, session=session, client=client)
-            
-            await db_update_transaction_account_sync(access_keys=access_keys, session=session)
+    await db_update_transaction_account_sync(access_keys=access_keys, session=session)
             
