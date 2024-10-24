@@ -64,6 +64,7 @@ class LinkAccountResponse(BaseModel):
 
 class LinkAccountRequest(BaseModel):
     institution_id: str
+    custom_user: str | None = None
 
 '''
     Util functions: 
@@ -130,7 +131,7 @@ async def db_update_institution_details(request: LinkAccountRequest, session: As
     logger.info(f'/plaid/db_update_institution_details: {institution_id} added to the database, and we are done!')
     return new_ins
 
-async def plaid_get_public_token(ins_details: Institution, client: httpx.AsyncClient) -> str:
+async def plaid_get_public_token(ins_details: Institution, client: httpx.AsyncClient, custom_user: str) -> str:
     logger.info('/plaid/plaid_get_public_token: called')
 
     public_token = None
@@ -145,7 +146,10 @@ async def plaid_get_public_token(ins_details: Institution, client: httpx.AsyncCl
 
     logger.info(f'/plaid/plaid_get_public_token endpoint calling {institution_id} with products as: {products}')
 
-    logger.info('/plaid/plaid_get_public_token: calling plaid endpoint /sandbox/public_token/create')
+    
+    options_dict = {
+        'override_username': custom_user
+    } if custom_user else {}
 
     try:
         resp = await client.post(f'{settings.test_plaid_url}/sandbox/public_token/create',
@@ -155,9 +159,7 @@ async def plaid_get_public_token(ins_details: Institution, client: httpx.AsyncCl
                             'secret': settings.plaid_secret,
                             'institution_id': institution_id,
                             'initial_products': products,
-                            'options': {
-                                'webhook': 'https://www.plaid.com/webhook'
-                            }
+                            'options': options_dict
                         })
         resp = resp.json()
         public_token = resp['public_token']

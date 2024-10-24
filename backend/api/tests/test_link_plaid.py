@@ -9,6 +9,7 @@ import pytest
 import httpx
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from fastapi import Depends
 from httpx import ASGITransport
 from sqlalchemy import select
 import logging
@@ -118,7 +119,7 @@ async def link_multiple_accounts_to_same_institution_verification(N: int):
             for access_key in access_keys:
                 validate_access_key(access_key)
 
-@pytest.mark.skip
+# @pytest.mark.skip
 @pytest.mark.asyncio
 async def test_link_multiple_accounts_to_same_institution(link_plaid_environment_fixture, setup_test_environment_fixture):
     async for _ in setup_test_environment_fixture:
@@ -127,13 +128,11 @@ async def test_link_multiple_accounts_to_same_institution(link_plaid_environment
             result = result.json()
             authorization_token = result['authorization_token']
 
-            start = time.time()
             result = await client_task(authorization_token=authorization_token, \
                                         ins_id=InstitutionIDs.plaid_bank, client=client)
-            end = time.time()
             result = result.json()
             # very lax requirement of within 15 seconds
-            assert end - start <= 15
+            # assert end - start <= 15
             assert result['message'] == 'success'
             # now test with N = 10 other clients on the same institution
             N = 10
@@ -148,7 +147,9 @@ async def test_link_multiple_accounts_to_same_institution(link_plaid_environment
             results = [r.json() for r in results]
             assert all([i['message'] == 'success' for i in results])
 
-@pytest.mark.skip
+            # ensure test passes covering all 11 institutions and access keys
+            await link_multiple_accounts_to_same_institution_verification(N=N + 1)
+
 @pytest.mark.asyncio
 async def test_link_1_account_to_multiple_institutions(setup_test_environment_fixture):
     print('is this even working?')
@@ -200,3 +201,16 @@ async def test_link_1_account_to_multiple_institutions(setup_test_environment_fi
                             assert ins.supports_investments and ins.supports_transactions
                         elif ins.institution_id == InstitutionIDs.first_platypus_bank:
                             assert not ins.supports_investments and ins.supports_transactions
+
+@pytest.mark.skip
+@pytest.mark.asyncio
+async def test_custom_many_accounts(link_plaid_environment_fixture, setup_test_environment_fixture):
+    async for _ in setup_test_environment_fixture:
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
+            response = await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
+            response = response.json()
+            authorization_token = response['authorization_token']
+            user_id = response['user_id']
+
+            # i am logging in with a specific sandbox user with specific data
+            

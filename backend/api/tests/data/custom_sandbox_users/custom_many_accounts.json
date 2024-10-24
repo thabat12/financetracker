@@ -1,0 +1,161 @@
+{
+    "override_accounts": [
+        {
+            "type": "depository",
+            "subtype": "checking",
+            "transactions": [
+                
+            ],
+            "identity": {
+                "names": [
+                    "Hooli LLC"
+                ],
+                "addresses": [
+                    {
+                        "primary": true,
+                        "data": {
+                            "country": "US",
+                            "city": "New York",
+                            "street": "111 8th Ave",
+                            "postal_code": "10011",
+                            "region": "NY"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "depository",
+            "subtype": "savings"
+        },
+        {
+            "type": "depository",
+            "subtype": "hsa"
+        },
+        {
+            "type": "loan",
+            "subtype": "business"
+        },
+        {
+            "type": "credit",
+            "subtype": "credit card",
+            "transactions": [
+                {
+                    "date_transacted": "2024-10-22",
+                    "date_posted": "2024-10-23",
+                    "amount": -7500,
+                    "description": "Send Money transaction initiated on Gingham",
+                    "currency": "USD"
+                },
+                {
+                    "date_transacted": "2024-10-20",
+                    "date_posted": "2024-10-21",
+                    "amount": 1523.52,
+                    "description": "TWILIO INC. Merchant name: Twilio",
+                    "currency": "USD"
+                }
+            ]
+        },
+        {
+            "type": "credit",
+            "subtype": "credit card",
+            "transactions": [
+                {
+                    "date_transacted": "2024-10-22",
+                    "date_posted": "2024-10-23",
+                    "amount": 500.00,
+                    "description": "Direct deposit from employer",
+                    "currency": "USD"                
+                },
+                {
+                    "date_transacted": "2024-10-20",
+                    "date_posted": "2024-10-21",
+                    "amount": 150.75,
+                    "description": "Interest earned for the month",
+                    "currency": "USD"
+                },
+                {
+                    "date_transacted": "2024-10-18",
+                    "date_posted": "2024-10-19",
+                    "amount": 1000.00,
+                    "description": "Transfer from Checking Account",
+                    "currency": "USD"
+                }
+            ]
+        },
+        {
+            "type": "credit",
+            "subtype": "credit card",
+            "transactions": [
+                {
+                    "date_transacted": "2024-10-22",
+                    "date_posted": "2024-10-23",
+                    "amount": 500.00,
+                    "description": "Direct deposit from employer",
+                    "currency": "USD"                
+                },
+                {
+                    "date_transacted": "2024-10-20",
+                    "date_posted": "2024-10-21",
+                    "amount": 150.75,
+                    "description": "Interest earned for the month",
+                    "currency": "USD"
+                },
+                {
+                    "date_transacted": "2024-10-18",
+                    "date_posted": "2024-10-19",
+                    "amount": 1000.00,
+                    "description": "Transfer from Checking Account",
+                    "currency": "USD"
+                }
+            ]
+        },
+        {
+            "type": "depository",
+            "subtype": "checking",
+            "transactions": [
+                {
+                    "date_transacted": "2024-10-15",
+                    "date_posted": "2024-10-16",
+                    "amount": 250.00,
+                    "description": "Gift deposit from family member",
+                    "currency": "USD"
+                },
+                {
+                    "date_transacted": "2024-10-10",
+                    "date_posted": "2024-10-11",
+                    "amount": 75.00,
+                    "description": "Refund from online purchase",
+                    "currency": "USD"
+                }
+            ]
+        },
+        {
+            "type": "depository",
+            "subtype": "checking",
+            "transactions": [
+                {
+                    "date_transacted": "2024-10-18",
+                    "date_posted": "2024-10-19",
+                    "amount": -120.00,
+                    "description": "Purchase at Coffee Shop",
+                    "currency": "USD"
+                },
+                {
+                    "date_transacted": "2024-10-15",
+                    "date_posted": "2024-10-16",
+                    "amount": -45.67,
+                    "description": "Dinner at restaurant",
+                    "currency": "USD"
+                },
+                {
+                    "date_transacted": "2024-10-10",
+                    "date_posted": "2024-10-11",
+                    "amount": -250.50,
+                    "description": "Monthly subscription for streaming service",
+                    "currency": "USD"
+                }
+            ]
+        }
+    ]
+}

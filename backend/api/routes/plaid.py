@@ -89,12 +89,13 @@ async def db_update_institution_details_dependency(
     return new_ins
 
 async def plaid_get_public_token_dependency(
-        ins_details: Institution = Depends(db_update_institution_details_dependency), 
+        request: LinkAccountRequest, # for sandbox purposes, add a custom_user field
+        ins_details: Institution = Depends(db_update_institution_details_dependency),
         cur_user: str = Depends(verify_token_depdendency),
         client: httpx.AsyncClient = Depends(yield_client)) -> str:
     
     logger.info(f"plaid_get_public_token_dependency called for user: {cur_user}, institution: {ins_details.name}")
-    public_token: str = await plaid_get_public_token(ins_details=ins_details, client=client)
+    public_token: str = await plaid_get_public_token(ins_details=ins_details, client=client, custom_user=request.custom_user)
     return public_token
 
 async def plaid_exchange_public_token_dependency(

@@ -485,6 +485,71 @@ async def plaid_get_refreshed_accounts(
     return all_accounts
 
 
+def execute_account_insert_update_statement(
+        user_key: bytes,
+        cur_user: str,
+        refreshed_account_data: List[PlaidAccount]
+    ) -> tuple[text, dict]:
+
+    values = []
+    params = {}
+    dt_now = datetime.now() # prevent unecessary recomputation of this
+
+    for account_data in refreshed_account_data:
+        aid = account_data.account_id
+        values.append(
+            f'(\'{aid}\', :{aid}_balance_available, :{aid}_balance_current, :{aid}_iso_currency_code, ' + \
+                f':{aid}_account_name, :{aid}_account_type, :{aid}_update_status, :{aid}_update_status_date, ' + \
+                f':{aid}_user_id, :{aid}_institution_id)'
+        )
+
+        params[f'{aid}_balance_available'] = encrypt_float(account_data.balances.available, user_key)
+        params[f'{aid}_balance_current'] = encrypt_float(account_data.balances.current, user_key)
+        params[f'{aid}_iso_currency_code'] = account_data.balances.iso_currency_code
+        params[f'{aid}_account_name'] = encrypt_data(bytes(account_data.name, encoding='utf-8'), user_key)
+        params[f'{aid}_account_type'] = encrypt_data(bytes(account_data.type, encoding='utf-8'), user_key)
+        params[f'{aid}_update_status'] = 'added'
+        params[f'{aid}_update_status_date'] = dt_now
+        params[f'{aid}_user_id'] = cur_user,
+        params[f'{aid}_institution_id'] = account_data.institution_id
+    
+    values_str = ', '.join(values)
+
+
+    # handle insertions and updates in one go
+    smt = text(f'''
+        INSERT INTO {Account.__tablename__}
+            VALUES {values_str}
+        ON CONFLICT (account_id)
+            DO UPDATE SET
+                balance_available=EXCLUDED.balance_available,
+                balance_current = EXCLUDED.balance_current,
+                update_status = EXCLUDED.update_status,
+                update_status_date = EXCLUDED.update_status_date;
+    ''')
+
+    return smt, params
+
+# TODO: figure this out by running a testcase on a much smaller account information plaid account...
+def execute_account_delete_statement(
+        cur_user: str,
+        refreshed_account_data: List[PlaidAccount]
+    ) -> tuple[text, dict]:
+
+    if not refreshed_account_data:
+        return
+
+    refreshed_values_ids = list(map(lambda pa: f"\'{pa.account_id}\'", refreshed_account_data))
+    refreshed_values_ids = '(' + ', '.join(refreshed_values_ids) + ')'
+
+    smt = text(f'''
+        DELETE FROM {Account.__tablename__}
+            WHERE account_id NOT IN :account_ids AND user_id = :cur_user;
+    ''')
+    params = {'account_ids': [pa.account_id for pa in refreshed_account_data], 'cur_user': cur_user}
+    
+    return smt, params
+
 async def db_update_accounts(
         cur_user: str, 
         user_key: bytes,
@@ -493,48 +558,31 @@ async def db_update_accounts(
         session: AsyncSession,
         client: httpx.AsyncClient
     ) -> None:
-
+    '''
+        Streamline SQL query operation to two statements.
+    '''
     refreshed_account_data: List[PlaidAccount] = None
     refreshed_account_data = await plaid_get_refreshed_accounts(user_key=user_key, user_access_keys=access_keys, \
                                          all_institutions=all_institutions, client=client)
-    all_institution_ids = [institution.institution_id for institution in all_institutions]
-
-    smt = select(Account.account_id).where(and_(Account.user_id == cur_user, \
-                                                Account.institution_id.in_(all_institution_ids)))
-    existing_account_ids = await session.scalars(smt)
-    existing_account_ids = set(existing_account_ids.all())
     
-    refreshed_account_ids = set(account.account_id for account in refreshed_account_data)
-    new_accounts = refreshed_account_ids - existing_account_ids
-    updated_accounts = refreshed_account_ids & existing_account_ids
-    deleted_accounts = existing_account_ids - refreshed_account_ids
+    insert_update_smt, insert_params = execute_account_insert_update_statement(
+        cur_user=cur_user, refreshed_account_data=refreshed_account_data, user_key=user_key)
+    delete_smt, delete_params =  execute_account_delete_statement(
+        cur_user=cur_user, refreshed_account_data=refreshed_account_data)
+    
+    combined_smt = text(f'{insert_update_smt} {delete_smt}')
+    insert_params.update(delete_params)
 
-    na, ua, da = [], [], []
-    for cur_refreshed_account in refreshed_account_data:
-        if cur_refreshed_account.account_id in new_accounts:
-            na.append(cur_refreshed_account)
-        elif cur_refreshed_account.account_id in updated_accounts:
-            ua.append(cur_refreshed_account)
-        else:
-            da.append(cur_refreshed_account)
+    import logging
+    logging.basicConfig()
+    logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
-    new_accounts, updated_accounts, deleted_accounts = na, ua, da
- 
+    logger.info(insert_params['account_ids'])
+    logger.info(insert_params['cur_user'])
 
-    for i, na in enumerate(new_accounts):
-        new_accounts[i] = map_plaid_account_to_account(plaid_account=na, user_key=user_key, \
-                                                       cur_user=cur_user)
-
-    session.add_all(new_accounts)
-
-    if updated_accounts:
-        db_update_plaid_accounts(user_key=user_key, session=session, updated_accounts=updated_accounts)
-
-    if deleted_accounts:
-        db_delete_plaid_accounts(deleted_accounts=deleted_accounts, session=session)
-
+    await session.execute(combined_smt, insert_params)
     await session.commit()
-
+    
 '''
 account_id = plaid_account.account_id,
         balance_available = encrypt_float(plaid_account.balances.available, user_key),
