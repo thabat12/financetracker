@@ -399,61 +399,6 @@ async def db_update_transactions(
 
         await session.commit()
 
-def map_plaid_account_to_account(
-        plaid_account: PlaidAccount,
-        user_key: bytes,
-        cur_user: str
-    ):
-
-    return Account(
-        account_id = plaid_account.account_id,
-        balance_available = encrypt_float(plaid_account.balances.available, user_key),
-        balance_current = encrypt_float(plaid_account.balances.current, user_key),
-        iso_currency_code = plaid_account.balances.iso_currency_code,
-        account_name = encrypt_data(bytes(plaid_account.name, encoding='utf-8'), user_key),
-        account_type = encrypt_data(bytes(plaid_account.type, encoding='utf-8'), user_key),
-        user_id = cur_user,
-        update_status = 'added',
-        update_status_date = datetime.now(),
-        institution_id=plaid_account.institution_id
-    )
-
-async def db_update_plaid_accounts(
-        user_key: bytes,
-        session: AsyncSession,
-        updated_accounts: List[PlaidAccount],
-    ) -> None:
-
-    await session.execute(
-        update(Account)
-        .values(
-            balance_available=case(
-                {account.account_id: encrypt_float(account.balances.available, user_key) for account in updated_accounts},
-                value=Account.account_id
-            ),
-            balance_current=case(
-                {account.account_id: encrypt_float(account.balances.current, user_key) for account in updated_accounts},
-                value=Account.account_id
-            ),
-            update_status=case(
-                {account.account_id: 'updated' for account in updated_accounts},
-                value=Account.account_id
-            ),
-            update_status_date=case(
-                {account.account_id: datetime.now() for account in updated_accounts},
-                value=Account.account_id
-            )
-        )
-        .where(Account.account_id.in_([account.account_id for account in updated_accounts]))
-    )
-
-async def db_delete_plaid_accounts(
-       deleted_accounts: set[str],
-       session: AsyncSession 
-    ) -> None:
-    smt = delete(Account).where(Account.account_id.in_(deleted_accounts))
-    await session.execute(smt)
-
 # gives every single plaid account that exists under all the user keys updated
 async def plaid_get_refreshed_accounts(
         user_key: bytes,
