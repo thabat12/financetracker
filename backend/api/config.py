@@ -2,6 +2,7 @@ import os
 import httpx
 import logging
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 from pydantic_settings import BaseSettings
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
@@ -37,6 +38,9 @@ def set_global_session(new_global_session):
     global global_session
     global_session = new_global_session
     session_set = True
+
+def get_global_session():
+    return global_session
 
 async def yield_db():
     global global_session

@@ -127,15 +127,14 @@ async def db_update_user_access_key_dependency(
 async def db_update_all_data_asynchronously_dependency(
         background_tasks: BackgroundTasks,
         _ = Depends(db_update_user_access_key_dependency),
-        session: AsyncSession = Depends(yield_db),
-        client: httpx.AsyncClient = Depends(yield_client),
         cur_user: str = Depends(verify_token_depdendency)) -> None:
     '''
         On every link account operation, there is a guarantee that the access token does not
         have any data initialized yet. So it is safe to assume that an update is necessary for
         the access key.
     '''
-    background_tasks.add_task(db_update_all_data_asynchronously, cur_user, session, client)
+    logger.info(f"db_update_all_data_asynchronously_dependency called for user: {cur_user}")
+    background_tasks.add_task(db_update_all_data_asynchronously, cur_user)
 
 # Process, Process, Load, Load, Return, (and a special background task to update data asynchronously)
 # takes in a LinkAccountRequest model as input
@@ -150,3 +149,20 @@ async def link_account(
     # background_tasks.add_task(db_update_all_data_asynchronously, cur_user)
 
     return LinkAccountResponse(message=LinkAccountResponseEnum.SUCCESS)
+
+"""
+    temporary test to see if the update asynchronous data is actually working or not
+"""
+
+from pydantic import BaseModel
+
+class LinkAccountTestRequest(BaseModel):
+    custom_user: str
+
+@plaid_router.post('/link_account_test')
+async def link_account_test(
+    request: LinkAccountTestRequest,
+    background_tasks: BackgroundTasks,
+    ):
+
+    background_tasks.add_task(db_update_all_data_asynchronously, request.custom_user)

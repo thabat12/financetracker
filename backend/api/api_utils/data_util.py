@@ -8,7 +8,7 @@ from sqlalchemy import select, update, case, delete, text, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 
-from api.config import settings, logger, yield_db, yield_client
+from api.config import settings, logger, yield_db, yield_client, get_global_session
 from api.api_utils.auth_util import verify_token
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data, encrypt_float, decrypt_float
 from db.models import *
@@ -185,7 +185,7 @@ async def db_get_access_key_updates(
         session: AsyncSession
     ) -> tuple[List[AccessKey], List[Institution]]:
 
-    logger.info('util method called: db_find_update_access_keys')
+    logger.info('util method called: db_get_access_key_updates')
 
     # find any access key that has its updated time greater than yesterday-ago or has never refreshed
     smt = select(AccessKey) \
@@ -378,14 +378,71 @@ async def db_update_transactions(
         added, modified, removed = await plaid_get_refreshed_transactions(
             access_key=cur_access_key, user_key=user_key, client=client)
         
+        # there is no update work to do
+        if not added and not modified and not removed:
+            return
+        
         # ensure that all merchant data is set
         await db_batch_update_merchants_data(added=added, modified=modified, \
                                              removed=removed, session=session)
         
+
+        # goal: simplify adding + modifying into one single execute statement
+
+        # updated_transaction_values = []
+        # updated_transaction_params = {}
+        # for updated_transaction in [*added, *modified]:
+        #     cur_transaction: PlaidTransaction = updated_transaction
+        #     cur_transaction_id = cur_transaction.transaction_id
+
+        #     updated_transaction_values.append(
+        #         f'(\'{cur_transaction_id}\', :{cur_transaction_id}_name, :{cur_transaction_id}_is_pending, ' + \
+        #             f':{cur_transaction_id}_amount, :{cur_transaction_id}_authorized_date, ' + \
+        #             f':{cur_transaction_id}_personal_finance_category, :{cur_transaction_id}_user_id, ' + \
+        #             f':{cur_transaction_id}_account_id, :{cur_transaction_id}_merchant_id, ' + \
+        #             f'\'created\', :{cur_transaction_id}_update_status_date, :{cur_transaction_id}_institution_id)'
+        #     )
+
+        #     updated_transaction_params[f"{cur_transaction_id}_name"] = \
+        #         encrypt_data(bytes(updated_transaction.name, encoding='utf-8'), user_key)
+        #     updated_transaction_params[f"{cur_transaction_id}_is_pending"] = updated_transaction.pending
+        #     updated_transaction_params[f"{cur_transaction_id}_amount"] = encrypt_float(updated_transaction.amount, user_key)
+        #     updated_transaction_params[f"{cur_transaction_id}_authorized_date"] = \
+        #         datetime.strptime(updated_transaction.authorized_date, '%Y-%m-%d') if updated_transaction.authorized_date else None
+        #     updated_transaction_params[f"{cur_transaction_id}_personal_finance_category"] = \
+        #         encrypt_data(bytes(updated_transaction.personal_finance_category.primary, encoding='utf-8'), user_key)
+        #     updated_transaction_params[f"{cur_transaction_id}_user_id"] = cur_user
+        #     updated_transaction_params[f"{cur_transaction_id}_account_id"] = updated_transaction.account_id
+        #     updated_transaction_params[f"{cur_transaction_id}_merchant_id"] = \
+        #         updated_transaction.merchant_entity_id if updated_transaction.merchant_entity_id is not None else None
+        #     updated_transaction_params[f"{cur_transaction_id}_update_status_date"] = datetime.now()
+        #     updated_transaction_params[f"{cur_transaction_id}_institution_id"] = cur_institution.institution_id
+
+        # smt = text(f"""
+        #     INSERT INTO {Transaction.__tablename__}
+        #         VALUES {', '.join(updated_transaction_values)}
+        #     ON CONFLICT (transaction_id)
+        #         DO UPDATE SET
+        #             name=EXCLUDED.name,
+        #             is_pending=EXCLUDED.is_pending,
+        #             amount=EXCLUDED.amount,
+        #             authorized_date=EXCLUDED.authorized_date,
+        #             personal_finance_category=EXCLUDED.personal_finance_category,
+        #             user_id=EXCLUDED.user_id,
+        #             account_id=EXCLUDED.account_id,
+        #             merchant_id=EXCLUDED.merchant_id,
+        #             update_status='updated',
+        #             update_status_date=EXCLUDED.update_status_date,
+        #             institution_id=EXCLUDED.institution_id;
+        # """)
+
+        # await session.execute(smt, updated_transaction_params)
+
         for ind, a in enumerate(added):
             added[ind] = map_plaid_transaction_to_transaction(plaid_transaction=a, cur_user=cur_user, \
                 user_key=user_key, institution_id=cur_institution.institution_id, update_status='added')
             
+
         session.add_all(added)
 
         for m in modified:
@@ -425,7 +482,7 @@ async def plaid_get_refreshed_accounts(
         all_data = resp.json()
         all_data['institution_id'] = cur_institution
 
-        all_accounts.extend([PlaidAccount(**data) for data in all_data['accounts']])
+        all_accounts.extend([PlaidAccount(**data, institution_id=cur_institution.institution_id) for data in all_data['accounts']])
 
     return all_accounts
 
@@ -448,6 +505,8 @@ def execute_account_insert_update_statement(
                 f':{aid}_user_id, :{aid}_institution_id)'
         )
 
+        print("the cur user is of type: ", type(cur_user), "and user is: ", cur_user)
+
         params[f'{aid}_balance_available'] = encrypt_float(account_data.balances.available, user_key)
         params[f'{aid}_balance_current'] = encrypt_float(account_data.balances.current, user_key)
         params[f'{aid}_iso_currency_code'] = account_data.balances.iso_currency_code
@@ -455,7 +514,7 @@ def execute_account_insert_update_statement(
         params[f'{aid}_account_type'] = encrypt_data(bytes(account_data.type, encoding='utf-8'), user_key)
         params[f'{aid}_update_status'] = 'added'
         params[f'{aid}_update_status_date'] = dt_now
-        params[f'{aid}_user_id'] = cur_user,
+        params[f'{aid}_user_id'] = cur_user
         params[f'{aid}_institution_id'] = account_data.institution_id
     
     values_str = ', '.join(values)
@@ -469,7 +528,7 @@ def execute_account_insert_update_statement(
             DO UPDATE SET
                 balance_available=EXCLUDED.balance_available,
                 balance_current = EXCLUDED.balance_current,
-                update_status = EXCLUDED.update_status,
+                update_status = 'updated',
                 update_status_date = EXCLUDED.update_status_date;
     ''')
 
@@ -485,13 +544,13 @@ def execute_account_delete_statement(
         return
 
     refreshed_values_ids = list(map(lambda pa: f"\'{pa.account_id}\'", refreshed_account_data))
-    refreshed_values_ids = '(' + ', '.join(refreshed_values_ids) + ')'
 
     smt = text(f'''
         DELETE FROM {Account.__tablename__}
-            WHERE account_id NOT IN :account_ids AND user_id = :cur_user;
+            WHERE account_id NOT IN ({",".join(refreshed_values_ids)}) AND user_id = :cur_user;
     ''')
-    params = {'account_ids': [pa.account_id for pa in refreshed_account_data], 'cur_user': cur_user}
+
+    params = {'cur_user': cur_user}
     
     return smt, params
 
@@ -506,6 +565,7 @@ async def db_update_accounts(
     '''
         Streamline SQL query operation to two statements.
     '''
+    logger.info("db_update_accounts called")
     refreshed_account_data: List[PlaidAccount] = None
     refreshed_account_data = await plaid_get_refreshed_accounts(user_key=user_key, user_access_keys=access_keys, \
                                          all_institutions=all_institutions, client=client)
@@ -515,17 +575,21 @@ async def db_update_accounts(
     delete_smt, delete_params =  execute_account_delete_statement(
         cur_user=cur_user, refreshed_account_data=refreshed_account_data)
     
-    combined_smt = text(f'{insert_update_smt} {delete_smt}')
-    insert_params.update(delete_params)
 
     import logging
     logging.basicConfig()
     logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
 
-    logger.info(insert_params['account_ids'])
-    logger.info(insert_params['cur_user'])
+    logger.info(insert_params)
 
-    await session.execute(combined_smt, insert_params)
+    for key, value in insert_params.items():
+        logger.info(f'{key}: {value}')
+        # print the types of each pair too
+        logger.info(f'{type(key)}: {type(value)}')
+    # logger.info(insert_params['cur_user'])
+
+    await session.execute(insert_update_smt, insert_params)
+    await session.execute(delete_smt, delete_params)
     await session.commit()
     
 '''
@@ -588,22 +652,28 @@ async def db_update_transaction_account_sync(access_keys: List[AccessKey], sessi
 
     await session.commit()
 
-async def db_update_all_data_asynchronously(
-        cur_user: str, 
-        session: AsyncSession,
-        client: httpx.AsyncClient):
-    logger.info(f'cur_user: {cur_user}')
-    user_key: bytes = await decrypt_user_key(cur_user=cur_user, session=session)
-
-    access_keys, institutions = await db_get_access_key_updates(cur_user=cur_user, session=session)
-    access_keys: list[AccessKey]
-    institutions: list[Institution]
-
-    # update transactions & accounts with all the necessary data required
-    await db_update_accounts(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
-                            all_institutions=institutions, session=session, client=client)
-    await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
-                                    access_keys=access_keys, session=session, client=client)
+async def db_update_all_data_asynchronously(cur_user: str):
     
-    await db_update_transaction_account_sync(access_keys=access_keys, session=session)
+    logger.info(f'db_update_all_data_asynchronously for: {cur_user}')
+
+    global_session = get_global_session()
+
+    async with global_session() as session:
+        logger.info("i am able to yield session here")
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            logger.info("i am able to yield client here")
+
+            user_key: bytes = await decrypt_user_key(cur_user=cur_user, session=session)
+
+            access_keys, institutions = await db_get_access_key_updates(cur_user=cur_user, session=session)
+            access_keys: list[AccessKey]
+            institutions: list[Institution]
+
+            # update transactions & accounts with all the necessary data required
+            await db_update_accounts(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
+                                    all_institutions=institutions, session=session, client=client)
+            await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
+                                            access_keys=access_keys, session=session, client=client)
+            await db_update_transaction_account_sync(access_keys=access_keys, session=session)
             
