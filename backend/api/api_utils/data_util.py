@@ -252,66 +252,6 @@ async def plaid_get_refreshed_transactions(
 
     return added, modified, removed
 
-# helper function for plaid_refresh_transactions -- also handles encryption
-def map_plaid_transaction_to_transaction(
-        plaid_transaction: PlaidTransaction, 
-        cur_user: str, 
-        user_key: bytes, 
-        institution_id: str,
-        update_status: str
-    ) -> Transaction:
-
-    return Transaction(
-        transaction_id = plaid_transaction.transaction_id,
-        name = encrypt_data(bytes(plaid_transaction.name, encoding='utf-8'), user_key),
-        is_pending = plaid_transaction.pending,
-        amount = encrypt_float(plaid_transaction.amount, user_key),
-        authorized_date = datetime.strptime(plaid_transaction.authorized_date, '%Y-%m-%d') \
-            if plaid_transaction.authorized_date else None,
-        personal_finance_category = encrypt_data(
-            bytes(plaid_transaction.personal_finance_category.primary, encoding='utf-8'), user_key
-        ),
-        user_id = cur_user,
-        account_id = plaid_transaction.account_id,
-        merchant_id = plaid_transaction.merchant_entity_id \
-            if plaid_transaction.merchant_entity_id is not None else None,
-        update_status = update_status,
-        update_status_date = datetime.now(),
-        institution_id = institution_id
-    )
-
-# helper function for plaid_refresh_transactions -- handles modified transaction state changes
-async def db_update_plaid_transaction(
-       plaid_transaction: PlaidTransaction,
-       user_key: bytes,
-       cur_user: str,
-       session: AsyncSession
-    ) -> None:
-
-    smt = update(Transaction).where(Transaction.transaction_id == plaid_transaction.transaction_id).values({
-        'amount': encrypt_float(plaid_transaction.amount, user_key),
-        'authorized_date': datetime.strptime(plaid_transaction.authorized_date, '%Y-%m-%d') \
-            if plaid_transaction.authorized_date else None,
-        'personal_finance_category': encrypt_data(
-            bytes(plaid_transaction.personal_finance_category.primary, encoding='utf-8'), user_key
-        ),
-        'user_id': cur_user,
-        'account_id': plaid_transaction.account_id,
-        'merchant_id': plaid_transaction.merchant_entity_id,
-        'is_pending': plaid_transaction.pending,
-        'name': encrypt_data(bytes(plaid_transaction.name, encoding='utf-8'), user_key)
-    })
-    await session.execute(smt)
-
-# helper function for plaid_refresh_transactions -- handles simply deleting transactions on the database
-async def db_remove_plaid_transaction(
-        plaid_transaction: PlaidTransaction,
-        session: AsyncSession
-    ) -> None:
-    
-    smt = delete(Transaction).where(Transaction.transaction_id == plaid_transaction.transaction_id)
-    await session.execute(smt)
-
 # helper method: gives the plain access key string
 def decrypt_access_key(access_key: bytes, user_key: bytes) -> str:
     return decrypt_data(access_key, user_key).decode('utf-8')
@@ -389,70 +329,72 @@ async def db_update_transactions(
 
         # goal: simplify adding + modifying into one single execute statement
 
-        # updated_transaction_values = []
-        # updated_transaction_params = {}
-        # for updated_transaction in [*added, *modified]:
-        #     cur_transaction: PlaidTransaction = updated_transaction
-        #     cur_transaction_id = cur_transaction.transaction_id
+        updated_transaction_values = []
+        updated_transaction_params = {}
+        for updated_transaction in [*added, *modified]:
+            cur_transaction: PlaidTransaction = updated_transaction
+            cur_transaction_id = cur_transaction.transaction_id
 
-        #     updated_transaction_values.append(
-        #         f'(\'{cur_transaction_id}\', :{cur_transaction_id}_name, :{cur_transaction_id}_is_pending, ' + \
-        #             f':{cur_transaction_id}_amount, :{cur_transaction_id}_authorized_date, ' + \
-        #             f':{cur_transaction_id}_personal_finance_category, :{cur_transaction_id}_user_id, ' + \
-        #             f':{cur_transaction_id}_account_id, :{cur_transaction_id}_merchant_id, ' + \
-        #             f'\'created\', :{cur_transaction_id}_update_status_date, :{cur_transaction_id}_institution_id)'
-        #     )
+            updated_transaction_values.append(
+                f'(\'{cur_transaction_id}\', :{cur_transaction_id}_name, :{cur_transaction_id}_is_pending, ' + \
+                    f':{cur_transaction_id}_amount, :{cur_transaction_id}_authorized_date, ' + \
+                    f':{cur_transaction_id}_personal_finance_category, \'created\', ' + \
+                    f':{cur_transaction_id}_update_status_date, :{cur_transaction_id}_user_id, ' + \
+                    f':{cur_transaction_id}_account_id, :{cur_transaction_id}_merchant_id, :{cur_transaction_id}_institution_id)'
+            )
 
-        #     updated_transaction_params[f"{cur_transaction_id}_name"] = \
-        #         encrypt_data(bytes(updated_transaction.name, encoding='utf-8'), user_key)
-        #     updated_transaction_params[f"{cur_transaction_id}_is_pending"] = updated_transaction.pending
-        #     updated_transaction_params[f"{cur_transaction_id}_amount"] = encrypt_float(updated_transaction.amount, user_key)
-        #     updated_transaction_params[f"{cur_transaction_id}_authorized_date"] = \
-        #         datetime.strptime(updated_transaction.authorized_date, '%Y-%m-%d') if updated_transaction.authorized_date else None
-        #     updated_transaction_params[f"{cur_transaction_id}_personal_finance_category"] = \
-        #         encrypt_data(bytes(updated_transaction.personal_finance_category.primary, encoding='utf-8'), user_key)
-        #     updated_transaction_params[f"{cur_transaction_id}_user_id"] = cur_user
-        #     updated_transaction_params[f"{cur_transaction_id}_account_id"] = updated_transaction.account_id
-        #     updated_transaction_params[f"{cur_transaction_id}_merchant_id"] = \
-        #         updated_transaction.merchant_entity_id if updated_transaction.merchant_entity_id is not None else None
-        #     updated_transaction_params[f"{cur_transaction_id}_update_status_date"] = datetime.now()
-        #     updated_transaction_params[f"{cur_transaction_id}_institution_id"] = cur_institution.institution_id
+            updated_transaction_params[f"{cur_transaction_id}_name"] = \
+                encrypt_data(bytes(updated_transaction.name, encoding='utf-8'), user_key)
+            updated_transaction_params[f"{cur_transaction_id}_is_pending"] = updated_transaction.pending
+            updated_transaction_params[f"{cur_transaction_id}_amount"] = encrypt_float(updated_transaction.amount, user_key)
+            updated_transaction_params[f"{cur_transaction_id}_authorized_date"] = \
+                datetime.strptime(updated_transaction.authorized_date, '%Y-%m-%d') if updated_transaction.authorized_date else None
+            updated_transaction_params[f"{cur_transaction_id}_personal_finance_category"] = \
+                encrypt_data(bytes(updated_transaction.personal_finance_category.primary, encoding='utf-8'), user_key)
+            updated_transaction_params[f"{cur_transaction_id}_update_status_date"] = datetime.now()
+            updated_transaction_params[f"{cur_transaction_id}_user_id"] = cur_user
+            updated_transaction_params[f"{cur_transaction_id}_account_id"] = updated_transaction.account_id
+            updated_transaction_params[f"{cur_transaction_id}_merchant_id"] = \
+                updated_transaction.merchant_entity_id if updated_transaction.merchant_entity_id is not None else None
+            updated_transaction_params[f"{cur_transaction_id}_institution_id"] = cur_institution.institution_id
 
-        # smt = text(f"""
-        #     INSERT INTO {Transaction.__tablename__}
-        #         VALUES {', '.join(updated_transaction_values)}
-        #     ON CONFLICT (transaction_id)
-        #         DO UPDATE SET
-        #             name=EXCLUDED.name,
-        #             is_pending=EXCLUDED.is_pending,
-        #             amount=EXCLUDED.amount,
-        #             authorized_date=EXCLUDED.authorized_date,
-        #             personal_finance_category=EXCLUDED.personal_finance_category,
-        #             user_id=EXCLUDED.user_id,
-        #             account_id=EXCLUDED.account_id,
-        #             merchant_id=EXCLUDED.merchant_id,
-        #             update_status='updated',
-        #             update_status_date=EXCLUDED.update_status_date,
-        #             institution_id=EXCLUDED.institution_id;
-        # """)
+        insert_smt = text(f"""
+            INSERT INTO {Transaction.__tablename__}
+                VALUES {', '.join(updated_transaction_values)}
+            ON CONFLICT (transaction_id)
+                DO UPDATE SET
+                    name=EXCLUDED.name,
+                    is_pending=EXCLUDED.is_pending,
+                    amount=EXCLUDED.amount,
+                    authorized_date=EXCLUDED.authorized_date,
+                    personal_finance_category=EXCLUDED.personal_finance_category,
+                    update_status='updated',
+                    update_status_date=EXCLUDED.update_status_date,
+                    user_id=EXCLUDED.user_id,
+                    account_id=EXCLUDED.account_id,
+                    merchant_id=EXCLUDED.merchant_id,
+                    institution_id=EXCLUDED.institution_id;
+        """)
 
-        # await session.execute(smt, updated_transaction_params)
+        removed_transaction_ids = [f"'{r.transaction_id}'" for r in removed]
 
-        for ind, a in enumerate(added):
-            added[ind] = map_plaid_transaction_to_transaction(plaid_transaction=a, cur_user=cur_user, \
-                user_key=user_key, institution_id=cur_institution.institution_id, update_status='added')
-            
+        delete_smt = text(f"""
+            DELETE FROM {Transaction.__tablename__}
+                WHERE transaction_id IN ({", ".join(removed_transaction_ids)}) AND user_id = {f"'{cur_user}'"};
+        """)
 
-        session.add_all(added)
 
-        for m in modified:
-            # indirectly calling session.execute
-            await db_update_plaid_transaction(plaid_transaction=m, user_key=user_key, \
-                cur_user=cur_user, session=session)
-            
-        for r in removed:
-            # indirectly calling session.execute
-            await db_remove_plaid_transaction(plaid_transaction=r, session=session)
+        import logging
+        logging.basicConfig()
+        logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
+
+        print(insert_smt)
+        print(updated_transaction_params)
+
+        if added or modified:
+            await session.execute(insert_smt, updated_transaction_params)
+        if removed:
+            await session.execute(delete_smt)
 
         await session.commit()
 
@@ -676,4 +618,3 @@ async def db_update_all_data_asynchronously(cur_user: str):
             await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
                                             access_keys=access_keys, session=session, client=client)
             await db_update_transaction_account_sync(access_keys=access_keys, session=session)
-            

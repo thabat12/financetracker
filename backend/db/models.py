@@ -133,7 +133,6 @@ class Transaction(Base):
     merchant_id = Column(String(Constants.IDSizes.MEDIUM), \
                             ForeignKey(f'{Merchant.__tablename__}.merchant_id'), nullable=True)
     
-    # TODO
     institution_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Institution.__tablename__}.institution_id'), nullable=True)
 
 class InvestmentHolding(Base):
