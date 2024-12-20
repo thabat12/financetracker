@@ -1,0 +1,4 @@
+FROM postgres:latest
+
+# override the configuration file for max connections, etc.
+COPY ./db/pg_config/postgresql.conf /etc/postgresql/postgresql.conf

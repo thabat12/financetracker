@@ -220,7 +220,7 @@ async def create_google_db_operation(user_info: GoogleAuthUserInfo, session: Asy
         this will retrieve the user id that is used for identification in the application.
 
 '''
-async def login_google_db_operation(user_info: GoogleAuthUserInfo, session: AsyncSession) -> CreateAccountReturn:
+async def login_google_db_operation(user_info: GoogleAuthUserInfo, session: AsyncSession, is_created: bool = False) -> CreateAccountReturn:
     logger.info('/auth/login_google_db_operation')
     result: LoginGoogleReturn = LoginGoogleReturn()
     google_user: GoogleUser = await session.get(GoogleUser, user_info.id)
@@ -237,7 +237,7 @@ async def login_google_db_operation(user_info: GoogleAuthUserInfo, session: Asyn
 
     await session.commit()
 
-    result.message = MessageEnum.LOGIN
+    result.message = MessageEnum.LOGIN if not is_created else MessageEnum.CREATED
     result.user_id = user_id
 
     return result

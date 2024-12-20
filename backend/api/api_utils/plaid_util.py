@@ -70,6 +70,7 @@ class LinkAccountRequest(BaseModel):
     Util functions: 
 '''
 async def plaid_get_institution_by_id(institution_id: str) -> InstitutionsGetByIdResponse:
+    logger.info("plaid_get_institution_by_id called")
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f'{TEST_PLAID_URL}/institutions/get_by_id',

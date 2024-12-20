@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     test_plaid_client_id: str
     plaid_secret: str
     auth_secret_key: str
+    api_host: str
+    api_port: int
+    test_api_host: str
+    test_api_port: int
 settings = Settings()
 
 # yield_db

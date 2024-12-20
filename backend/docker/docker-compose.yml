@@ -1,0 +1,26 @@
+version: '3'
+services:
+  db:
+    image: postgres:latest
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_HOST: ${POSTGRES_HOST}
+      POSTGRES_PORT: ${POSTGRES_PORT}
+      ASYNC_SQLALCHEMY_DATABASE_URI: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}"
+      SQLALCHEMY_DATABASE_URI: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+    ports:
+      - "5432:5432"
+  api:
+    build:
+      context: ../
+      dockerfile: ./docker/Dockerfile.api
+    ports:
+      - "8000:8000"
+    command: ["uvicorn", "api.api:app", "--reload", "--host", "${API_HOST}", "--port", "${API_PORT}", "--log-level", "debug"]
+    volumes:
+      - ../api:/app/api
+      - ../db:/app/db
+      
+    

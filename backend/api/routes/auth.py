@@ -33,13 +33,14 @@ auth_router = APIRouter()
 
 # CACHED SESSION
 async def session_dependency(session=Depends(yield_db)) -> AsyncSession:
-    logger.info("SESSION DEPENDENCY CREATED NEW SESSION")
+    logger.info("session_dependency")
     return session
 
 # LOAD: load google auth user info data
 async def load_google_login_response_dependency(
         request: LoginGoogleRequest, 
         client: httpx.AsyncClient = Depends(yield_client)) -> GoogleAuthUserInfo:
+    logger.info("load_google_login_response_dependency")
     user_info = await load_google_login_response(request=request, client=client)
     return user_info
 
@@ -55,7 +56,7 @@ async def login_google_db_operation_dependency(
     elif path == '/auth/create_google':
         logger.info('creating user')
         await create_google_db_operation(user_info=user_info, session=session)
-        result = await login_google_db_operation(user_info=user_info, session=session)
+        result = await login_google_db_operation(user_info=user_info, session=session, is_created=True)
     else:
         raise HTTPException(detail='invalid path provided!', status_code=500)
 
@@ -74,7 +75,6 @@ async def create_auth_session_dependency(
         user_id=user_db.user_id,
         account_status=user_db.message
     )
-
 # PROCESS: background task for registering an asynchronous dependency
 #           note that this will change in test environment to become synchronous
 #           because of pytest's limitations with their async test modules
