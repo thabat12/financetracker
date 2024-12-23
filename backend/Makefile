@@ -25,8 +25,7 @@ migrate_db: ./db/models.py
 
 clear_db_cache:
 	@echo "Clearing alembic version files..."
-	@rm -r ./alembic/versions
-	@mkdir ./alembic/versions
+	@chmod 777 ./alembic/versions/*
 	@python -m db.reset_alembic
 	@echo "Alembic version directory cleared and version table reset."
 

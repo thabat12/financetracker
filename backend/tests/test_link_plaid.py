@@ -1,213 +1,245 @@
 '''
-    These suite of tests will ensure that all the Plaid level stuff is
-    handled properly.
+    Run some tests to investigate concurrency and logic updates of the api. These tests are only
+    focusing on the client-side interface of the API and are subject to change depending on the
+    behavior of the API.
 '''
 import sys
-import time
 import asyncio
+import time
+import asyncpg
+import random
 import pytest
 import httpx
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from fastapi import Depends
-from httpx import ASGITransport
-from sqlalchemy import select
+import requests
 import logging
+from dotenv import load_dotenv
+from pydantic import BaseModel
+from sqlalchemy import create_engine, select, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
-
-from api.api import app
-from tests.data.userdata import generate_random_mock_google_user
-from api.api_utils.auth_util import GoogleAuthUserInfo, MessageEnum
-from api.routes.auth import auth_router, load_google_login_response_dependency
-from api.routes.plaid import plaid_router
-from tests.data.userdata import PLAID_SANDBOX_INSTITUTION_IDS
-from tests.data.institutiondata import InstitutionIDs
-from tests.data.institutiondata import validate_institution
-from tests.data.institutiondata import validate_access_key
+from api.config import settings
 from db.models import *
+from tests.data.institutiondata import *
 
-# client = TestClient(app=app)
-# app.include_router(auth_router, prefix='/auth')
-# app.include_router(plaid_router, prefix='/plaid')
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__).setLevel(logging.INFO)
 
-# # helper function to create the httpx tasks
-# def client_task(authorization_token: str, ins_id: str, client: httpx.AsyncClient):
-#     return client.post(f'{TESTCLIENT_BASE_URL}/plaid/link_account', 
-#                         headers={
-#                             "Authorization": f'Bearer {authorization_token}',
-#                             "Content-Type": "application/json"
-#                         },
-#                         json={'institution_id': ins_id})
+TEST_API_URL = f"http://{settings.test_api_host}:{settings.test_api_port}"
 
-# async def link_1_transaction_account_verification():
-#     '''
-#         ensure:
-#             institution details are populated
-#             access key is updated to expected values
-#             data for transactions and accounts properly populated
-#     '''
-#     logger.info('link_1_transaction_account_verification')
-#     # database checking
-#     Session = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
 
-#     async with Session() as session:
-#         async with session.begin():
-#             # institution
-#             institutions = await session.scalars(select(Institution))
-#             institutions = institutions.all()
+class CreateGoogleResponse(BaseModel):
+    authorization_token: str
+    user_id: str
+    account_status: str
 
-#             assert len(institutions) == 1
-#             plaid_bank_ins: Institution = institutions[0]
+class LinkPlaidAccountResponse(BaseModel):
+    message: str
 
-#             # calls assert statements from here
-#             validate_institution(plaid_bank_ins)
+def create_mock_google_user_endpoint() -> CreateGoogleResponse:
+    resp = requests.post(f"{TEST_API_URL}/auth/create_google", json={})
+    return CreateGoogleResponse.model_validate(resp.json())
 
-#             # access key
-#             access_keys = await session.scalars(select(AccessKey))
-#             access_keys = access_keys.all()
+def link_plaid_account(authorization_token: str, ins_id: str):
+    resp = requests.post(f"{TEST_API_URL}/plaid/link_account", 
+                        headers={
+                            "Authorization": f"Bearer {authorization_token}",
+                            "Content-Type": "application/json"
+                        }, 
+                        json={"institution_id": ins_id},
+                        timeout=30)
+    
+    return LinkPlaidAccountResponse.model_validate(resp.json())
 
-#             assert len(access_keys) == 1
-#             access_key: AccessKey = access_keys[0]
+# use this to manually validate any institution after linking account
+sql_engine = create_engine(settings.test_sqlalchemy_database_uri)
 
-#             # ensure the access key is as-expected
-#             validate_access_key(access_key, plaid_bank_ins)
+"""
+    Synchronous testing of the link_plaid endpoint
+"""
+def test_api_root():
+    resp = requests.get(TEST_API_URL)
+    assert resp.status_code == 200
 
-#             # there should be a lot of data populated into the tables
+@pytest.mark.skip
+def test_link_1_plaid_account_no_async(clear_database):
+    """
+        ensure:
+            institution details are populated
+            access key is updated to expected values
+    """
+    # first create the google user
+    created_user: CreateGoogleResponse = create_mock_google_user_endpoint()
+    authorization_token = created_user.authorization_token
+    assert len(authorization_token) > 0
+    assert created_user.user_id is not "" and created_user.user_id is not None
+    assert created_user.account_status == "created"
 
-# # @pytest.mark.skip
-# @pytest.mark.asyncio
-# async def test_link_1_transaction_account(link_plaid_environment_fixture, setup_test_environment_fixture):
-#     async for _ in setup_test_environment_fixture:
-#         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
-#             # first get some users onto the database
-#             result = await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
-#             result = result.json()
+    # now link the plaid account
+    created_link: LinkPlaidAccountResponse = \
+        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.plaid_bank)
 
-#             authorization_token = result['authorization_token']
+    assert created_link.message == "success"
 
-#             result = await client_task(authorization_token=authorization_token, \
-#                                        ins_id=InstitutionIDs.plaid_bank, client=client)
-            
-#             await link_1_transaction_account_verification()
+    with sql_engine.connect() as connection:
+        # when a plaid account is linked, you have the side-effect of knowing things about
+        # its institution
+        smt = select(Institution).where(Institution.institution_id == InstitutionIDs.plaid_bank)
+        institution = connection.execute(smt).all()
+        assert len(institution) == 1
+        
+        plaid_bank_institution = institution[0]
+        validate_institution(plaid_bank_institution)
 
-# async def link_multiple_accounts_to_same_institution_verification(N: int):
-#     '''
-#         helper db verification method for:
-#             test_link_multiple_accounts_to_same_institution
-#     '''
-#     Session = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+        # you should also expect that there is an acces key for this current user
+        smt = select(AccessKey).where(AccessKey.user_id == created_user.user_id)
+        access_keys = connection.execute(smt).all()
+        assert len(access_keys) == 1 # there should only be one of these for the user
+        user_access_key = access_keys[0]
+        print(user_access_key)
 
-#     async with Session() as session:
-#         async with session.begin():
-#             institutions = await session.scalars(select(Institution))
-#             institutions = institutions.all()
-            
-#             assert len(institutions) == 1
+        # validate the access key assuming that there is no need to check for updated time (this process should
+        #   still be running asynchronously in the background!)
+        validate_access_key(access_key=user_access_key, institution=plaid_bank_institution, updated_time=None)
 
-#             plaid_institution: Institution = institutions[0]
-#             validate_institution(plaid_institution)
+def test_link_multiple_institutions_to_one_account(clear_database):
+    created_user: CreateGoogleResponse = create_mock_google_user_endpoint()
+    authorization_token = created_user.authorization_token
 
-#             users = (await session.scalars(select(User))).all()
-#             access_keys = (await session.scalars(select(AccessKey))).all()
+    # link multiple accounts sequentially
+    created_link: LinkPlaidAccountResponse = \
+        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.plaid_bank)
+    
+    assert created_link.message == "success"
 
-#             assert len(users) == N
-#             assert len(access_keys) == N
+    created_link: LinkPlaidAccountResponse = \
+        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.first_platypus_bank)
+    
+    assert created_link.message == "success"
 
-#             for access_key in access_keys:
-#                 validate_access_key(access_key)
+    created_link: LinkPlaidAccountResponse = \
+        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.tartan_bank)
+    
+    assert created_link.message == "success"
 
-# # @pytest.mark.skip
-# @pytest.mark.asyncio
-# async def test_link_multiple_accounts_to_same_institution(link_plaid_environment_fixture, setup_test_environment_fixture):
-#     async for _ in setup_test_environment_fixture:
-#         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
-#             result = await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
-#             result = result.json()
-#             authorization_token = result['authorization_token']
+    created_link: LinkPlaidAccountResponse = \
+        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.pnc)
 
-#             result = await client_task(authorization_token=authorization_token, \
-#                                         ins_id=InstitutionIDs.plaid_bank, client=client)
-#             result = result.json()
-#             # very lax requirement of within 15 seconds
-#             # assert end - start <= 15
-#             assert result['message'] == 'success'
-#             # now test with N = 10 other clients on the same institution
-#             N = 10
-#             clients = await asyncio.gather(*[client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={}) for _ in range(N)])
-#             clients = [c.json() for c in clients]
-#             authorization_tokens = [c['authorization_token'] for c in clients]
-#             requests = [client_task(authorization_token=token, ins_id=InstitutionIDs.plaid_bank, client=client) \
-#                         for token in authorization_tokens]
-#             start = time.time()
-#             results = await asyncio.gather(*requests)
-#             end = time.time()
-#             results = [r.json() for r in results]
-#             assert all([i['message'] == 'success' for i in results])
+    assert created_link.message == "success"
 
-#             # ensure test passes covering all 11 institutions and access keys
-#             await link_multiple_accounts_to_same_institution_verification(N=N + 1)
+    # cheeck and see if all institutions are set
+    
+    with sql_engine.connect() as conn:
+        smt = select(Institution)
+        all_institutions = conn.execute(smt).all()
+        print("are there 4 institutions connected to the actual database?", all_institutions)
+        assert len(all_institutions) == 4
 
-# @pytest.mark.asyncio
-# async def test_link_1_account_to_multiple_institutions(setup_test_environment_fixture):
-#     print('is this even working?')
-#     async for _ in setup_test_environment_fixture:
-#         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
-#             # first login with a user
-#             response = await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
-#             response = response.json()
-#             authorization_token = response['authorization_token']
-#             user_id = response['user_id']
+        print("now we are validating the institutions")
+        for ins in all_institutions:
+            validate_institution(ins)
 
-#             requests = [
-#                 client_task(authorization_token=authorization_token, ins_id=InstitutionIDs.plaid_bank, client=client),
-#                 client_task(authorization_token=authorization_token, ins_id=InstitutionIDs.first_platypus_bank, client=client),
-#                 client_task(authorization_token=authorization_token, ins_id=InstitutionIDs.tartan_bank, client=client),
-#             ]
+        print("are there 4 access keys connected to the actual database?")
+        smt = select(AccessKey)
+        all_access_keys = conn.execute(smt).all()
+        assert len(all_access_keys) == 4
+        
 
-#             responses = await asyncio.gather(*requests)
-#             responses = [r.json() for r in responses]
+        # now, let us wait for a bit and let the updates propagate, this might take a while...
+        TIMEOUT = 30
 
-#             assert all([i['message'] == 'success' for i in responses])
+        time.sleep(TIMEOUT)
 
-#             # also check the database to ensure that each access key is populated correctly
-#             Session = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+        # i linked only 4 institutions, so there should be 4 institutions associated with transactions
+        print("are tehre 4 institutions associated with transactions?")
+        smt = text("SELECT COUNT(DISTINCT institution_id) FROM transaction;")
+        num_institutions_on_transaction = conn.execute(smt).scalar()
+        num_institutions_on_transaction = int(num_institutions_on_transaction)
+        assert num_institutions_on_transaction == 4
 
-#             async with Session() as session:
-#                 async with session.begin():
-#                     smt = select(AccessKey).where(AccessKey.user_id == user_id)
-#                     access_keys = await session.execute(smt)
-#                     access_keys = access_keys.all()
+        # similarly, there should be 4 institutions associated with accounts
+        print("are there 4 institutions associated with accounts?")
+        smt = text("SELECT COUNT(DISTINCT institution_id) FROM account;")
+        num_institutions_on_account = conn.execute(smt).scalar()
+        num_institutions_on_account = int(num_institutions_on_account)
+        assert num_institutions_on_account == 4  
 
-#                     # simple test to ensure that there are the expected count of access keys
-#                     assert len(access_keys) == 3
+"""
+    Asynchronous testing of the link_plaid endpoint
+"""
 
-#                     # next check the institution data being populated
-#                     institutions = await session.execute(select(Institution))
-#                     institutions = institutions.scalars().all()
+@pytest.mark.skip
+@pytest.mark.asyncio
+async def test_link_1_plaid_account_async(clear_database):
+    """
+        Yeah, this method does not need to be async but whatever
+    """
+    SLEEP_TIMEOUT = 15
 
-#                     # very hardcoded checking for institution support on sandbox
-#                     for ins in institutions:
-#                         logger.info(ins.__dir__())
-#                         ins: Institution
+    created_user: CreateGoogleResponse = create_mock_google_user_endpoint()
+    assert created_user.authorization_token is not None
 
-#                         if ins.institution_id == InstitutionIDs.pnc:
-#                             assert ins.supports_investments and ins.supports_transactions
-#                         elif ins.institution_id == InstitutionIDs.plaid_bank:
-#                             assert ins.supports_investments and ins.supports_transactions
-#                         elif ins.institution_id == InstitutionIDs.tartan_bank:
-#                             assert ins.supports_investments and ins.supports_transactions
-#                         elif ins.institution_id == InstitutionIDs.first_platypus_bank:
-#                             assert not ins.supports_investments and ins.supports_transactions
+    authorization_token = created_user.authorization_token
 
-# @pytest.mark.skip
-# @pytest.mark.asyncio
-# async def test_custom_many_accounts(link_plaid_environment_fixture, setup_test_environment_fixture):
-#     async for _ in setup_test_environment_fixture:
-#         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
-#             response = await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
-#             response = response.json()
-#             authorization_token = response['authorization_token']
-#             user_id = response['user_id']
+    # now link the plaid account
+    print("about to link the plaid account")
+    created_link: LinkPlaidAccountResponse = \
+        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.plaid_bank)
 
-#             # i am logging in with a specific sandbox user with specific data
-            
+    print("i just linked the plaid account yay")
+    assert created_link.message == "success"
+
+    await asyncio.sleep(SLEEP_TIMEOUT)
+
+    async_engine = create_async_engine(settings.test_async_sqlalchemy_database_uri)
+
+    async with async_engine.connect() as conn:
+        smt = select(Institution).where(Institution.institution_id == InstitutionIDs.plaid_bank)
+        institutions = await conn.execute(smt)
+        institutions = institutions.all()
+        print(institutions, 'is the institution data')
+        assert len(institutions) == 1
+        institution = institutions[0] # actually get the institution here
+
+        smt = select(AccessKey).where(AccessKey.user_id == created_user.user_id)
+        access_keys = await conn.execute(smt)
+        access_keys = access_keys.all()
+        print(access_keys, 'is the access key data')
+        assert len(access_keys) == 1 # there should only be one of these for the user
+        user_access_key = access_keys[0]
+
+        # by now, there should be some valid stuff under the access key, and the key should be updated
+        validate_access_key(access_key=user_access_key, institution=institution, updated_time=datetime.now())
+
+def async_link_plaid_account_endpoint(async_client: httpx.AsyncClient, authorization_token: str, ins_id: str):
+    return async_client.post(f"{TEST_API_URL}/plaid/link_account", headers={
+                            "Authorization": f"Bearer {authorization_token}",
+                            "Content-Type": "application/json"
+                        },
+                        json={"institution_id": ins_id})
+
+@pytest.mark.skip
+@pytest.mark.asyncio
+async def test_link_5_plaid_accounts_async(clear_database):
+    """
+        Plaid link account has some limitations in sandbox, and that is especially true when you are
+        experiencing rate throttling. So we can't really abuse the concurrency tests due to those exeternal
+        issues, but we can assume that our background tasks and everything is working at a somewhat-expected 
+        level.
+    """
+    READ_TIMEOUT = 20
+    USERS = 5
+
+    created_users = [create_mock_google_user_endpoint() for _ in range(USERS)]
+    ins_choices = [InstitutionIDs.plaid_bank, InstitutionIDs.first_platypus_bank, InstitutionIDs.tartan_bank, InstitutionIDs.pnc]
+
+    async with httpx.AsyncClient(timeout=READ_TIMEOUT) as client:
+        tasks = [async_link_plaid_account_endpoint(client, user.authorization_token, random.choice(ins_choices)) for user in created_users]
+        results = await asyncio.gather(*tasks)
+        results = [r.json() for r in results]
+
+        print(results, "are the results")
+
+        results = list(map(lambda i: LinkPlaidAccountResponse.model_validate(i), results))
+
+        for r in results:
+            assert r.message == "success"

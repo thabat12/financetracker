@@ -13,6 +13,10 @@ from api.api_utils.auth_util import verify_token
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data, encrypt_float, decrypt_float
 from db.models import *
 
+import logging
+logging.getLogger('sqlalchemy').setLevel(logging.WARNING)  # Set level to WARNING or ERROR
+logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)  # Suppress query logs
+
 '''
     Constants: 
 
@@ -147,7 +151,7 @@ def decrypt_transaction_data(transaction: Transaction, user_key: bytes) -> PTran
         institution_id=transaction.institution_id
     )
 
-# READ ONLY: only retrieve transactions based on the current user being selected
+# READ ONLY: only retrieve transactions based on the current user selected
 async def db_get_transactions(
         cur_user: str, 
         user_key: bytes, 
@@ -311,8 +315,9 @@ async def db_update_transactions(
     ) -> None:
     
     for cur_institution, cur_access_key in zip(all_institutions, access_keys):
+        print("iterating cur_institution", cur_institution.institution_id, "and access key", cur_access_key.access_key_id)
         if not cur_institution.supports_transactions:
-            return
+            continue
         
         # note thhat this function also modifies the transactions_sync_cursor in the database
         added, modified, removed = await plaid_get_refreshed_transactions(
@@ -320,7 +325,7 @@ async def db_update_transactions(
         
         # there is no update work to do
         if not added and not modified and not removed:
-            return
+            continue
         
         # ensure that all merchant data is set
         await db_batch_update_merchants_data(added=added, modified=modified, \
@@ -383,18 +388,12 @@ async def db_update_transactions(
                 WHERE transaction_id IN ({", ".join(removed_transaction_ids)}) AND user_id = {f"'{cur_user}'"};
         """)
 
-
-        import logging
-        logging.basicConfig()
-        logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
-
-        print(insert_smt)
-        print(updated_transaction_params)
-
         if added or modified:
             await session.execute(insert_smt, updated_transaction_params)
         if removed:
             await session.execute(delete_smt)
+
+        print("just updated the transaction values for institution id", cur_institution.institution_id)
 
         await session.commit()
 
@@ -446,8 +445,6 @@ def execute_account_insert_update_statement(
                 f':{aid}_account_name, :{aid}_account_type, :{aid}_update_status, :{aid}_update_status_date, ' + \
                 f':{aid}_user_id, :{aid}_institution_id)'
         )
-
-        print("the cur user is of type: ", type(cur_user), "and user is: ", cur_user)
 
         params[f'{aid}_balance_available'] = encrypt_float(account_data.balances.available, user_key)
         params[f'{aid}_balance_current'] = encrypt_float(account_data.balances.current, user_key)
@@ -516,37 +513,10 @@ async def db_update_accounts(
         cur_user=cur_user, refreshed_account_data=refreshed_account_data, user_key=user_key)
     delete_smt, delete_params =  execute_account_delete_statement(
         cur_user=cur_user, refreshed_account_data=refreshed_account_data)
-    
-
-    import logging
-    logging.basicConfig()
-    logging.getLogger('sqlalchemy.engine').setLevel(logging.INFO)
-
-    logger.info(insert_params)
-
-    for key, value in insert_params.items():
-        logger.info(f'{key}: {value}')
-        # print the types of each pair too
-        logger.info(f'{type(key)}: {type(value)}')
-    # logger.info(insert_params['cur_user'])
 
     await session.execute(insert_update_smt, insert_params)
     await session.execute(delete_smt, delete_params)
     await session.commit()
-    
-'''
-account_id = plaid_account.account_id,
-        balance_available = encrypt_float(plaid_account.balances.available, user_key),
-        balance_current = encrypt_float(plaid_account.balances.current, user_key),
-        iso_currency_code = plaid_account.balances.iso_currency_code,
-        account_name = encrypt_data(bytes(plaid_account.name, encoding='utf-8'), user_key),
-        account_type = encrypt_data(bytes(plaid_account.type, encoding='utf-8'), user_key),
-        user_id = cur_user,
-        update_status = 'added',
-        update_status_date = datetime.now(),
-        institution_id=plaid_account.institution_id
-
-'''
 
 def decrypt_account_data(account: Account, user_key: bytes) -> PAccount:
     return PAccount(
@@ -601,10 +571,7 @@ async def db_update_all_data_asynchronously(cur_user: str):
     global_session = get_global_session()
 
     async with global_session() as session:
-        logger.info("i am able to yield session here")
-
         async with httpx.AsyncClient(timeout=30) as client:
-            logger.info("i am able to yield client here")
 
             user_key: bytes = await decrypt_user_key(cur_user=cur_user, session=session)
 

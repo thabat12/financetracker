@@ -10,6 +10,7 @@ import httpx
 import requests
 import logging
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 from api.config import settings
 
@@ -19,102 +20,73 @@ logger = logging.getLogger(__name__).setLevel(logging.INFO)
 
 TEST_API_URL = f'http://{settings.test_api_host}:{settings.test_api_port}'
 
+class CreateGoogleResponse(BaseModel):
+    authorization_token: str
+    user_id: str
+    account_status: str
 
+def create_mock_google_user_endpoint() -> CreateGoogleResponse:
+    resp = requests.post(f"{TEST_API_URL}/auth/create_google", json={})
+    return CreateGoogleResponse.model_validate(resp.json())
 
 """
     Synchronous testing of the google login API
 """
-
-
 def test_api_root():
     resp = requests.get(f"{TEST_API_URL}", json={})
 
     assert resp.status_code == 200
-    print(resp.json())
 
-def test_create_mock_google_users():
-    resp = requests.post(f"{TEST_API_URL}/auth/create_google", json={})
+def test_create_mock_google_user():
+    created_user: CreateGoogleResponse = create_mock_google_user_endpoint()
 
-    # assert resp.status_code == 200
-    # print(resp.json())
-    print(f"{TEST_API_URL}/auth/create_google")
+    authorization_token = created_user.authorization_token
+    
+    assert len(authorization_token) > 0
+    assert created_user.user_id is not "" and created_user.user_id is not None
+    assert created_user.account_status == "created"
 
+@pytest.mark.skip
+def test_create_mock_google_users_20_sequential():
+    """
+        Sequential logins take a very long time, so it is better to just test these at
+        a lower number (so things aren't as suspenseful)
+    """
+    N = 20
+    for _ in range(N):
+        created_user: CreateGoogleResponse = create_mock_google_user_endpoint()
+        authorization_token = created_user.authorization_token
 
-# @pytest.mark.skip
-# @pytest.mark.asyncio
-# async def test_one_google_login(setup_test_environment_fixture):
-#     async for _ in setup_test_environment_fixture:
-#         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
-#             await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
+        assert len(authorization_token) > 0
+        assert created_user.user_id is not "" and created_user.user_id is not None
+        assert created_user.account_status == "created"
 
-# # @pytest.mark.skip
-# @pytest.mark.asyncio
-# async def test_10_concurrent_google_logins(setup_test_environment_fixture):
-#     async for _ in setup_test_environment_fixture:
-#         # handle async context via async for loop
-#         N_USERS = 10
-#         login_results = None
+"""
+    Asynchronous testing of the google login API
+"""
+def async_create_mock_google_user_endpoint(async_client: httpx.AsyncClient):
+    return async_client.post(f"{TEST_API_URL}/auth/create_google", json={})
 
-#         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
-#             tasks = [client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={}) for _ in range(N_USERS)]
+@pytest.mark.asyncio
+async def test_google_single_user_100_concurrent_logins():
+    """
+        This should be relatively fast because FastAPI is designed to be asynchronous
+    """
+    N = 100
 
-#             login_results = await asyncio.gather(*tasks)
-#             login_results = list(map(lambda i: i.json(), login_results))
-#         assert len(login_results) == N_USERS
+    async with httpx.AsyncClient(timeout=10) as client:
+        tasks = [async_create_mock_google_user_endpoint(client) for _ in range(N)]
 
-# # @pytest.mark.skip
-# @pytest.mark.asyncio
-# async def test_google_login_twice(setup_test_environment_fixture):
-#     async for _ in setup_test_environment_fixture:
-#         random_user: GoogleAuthUserInfo = generate_random_mock_google_user()
-#         # keep the login user the same every time
-#         app.dependency_overrides[load_google_login_response_dependency] = lambda: random_user
+        # perform these tasks now
+        login_results = await asyncio.gather(*tasks)
+        login_results = list(map(lambda i: i.json(), login_results))
 
-#         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
+    assert len(login_results) == N
 
-#             response = await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
-#             response = response.json()
-#             assert response['account_status'] == 'login'
+    for login_result in login_results:
+        created_user = CreateGoogleResponse.model_validate(login_result)
 
-#             response = await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
-#             response = response.json()
-#             assert response['account_status'] == 'login'
-
-# # @pytest.mark.skip
-# @pytest.mark.asyncio
-# async def test_google_single_user_100_sequential_logins(setup_test_environment_fixture):
-#     async for _ in setup_test_environment_fixture:
-#         N = 10
-#         random_user: GoogleAuthUserInfo = generate_random_mock_google_user()
-#         google_id = random_user.id
-#         # keep the login user the same every time
-#         app.dependency_overrides[load_google_login_response_dependency] = lambda: random_user
-
-#         num_created, num_login = 0, 0
-
-#         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
-#             await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
-#             for _ in range(N):
-#                 result = await client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={})
-#                 result = result.json()
-
-#                 num_login += int(result['account_status'] == 'login')
-
-#         assert num_login == N
-
-# # @pytest.mark.skip
-# @pytest.mark.asyncio
-# async def test_google_single_user_100_concurrent_logins(setup_test_environment_fixture):
-#     async for _ in setup_test_environment_fixture:
-#         N = 10
-
-#         random_user: GoogleAuthUserInfo = generate_random_mock_google_user()
-#         google_id = random_user.id
-#         # keep the login user the same every time
-#         app.dependency_overrides[load_google_login_response_dependency] = lambda: random_user
-
-#         async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=TESTCLIENT_BASE_URL) as client:
-#             await client.post(f'{TESTCLIENT_BASE_URL}/auth/create_google', json={})
-#             tasks = [client.post(f'{TESTCLIENT_BASE_URL}/auth/login_google', json={}) for _ in range(N)]
-#             results = await asyncio.gather(*tasks)
-#             results = [i.json() for i in results]
+        authorization_token = created_user.authorization_token
+        assert len(authorization_token) > 0
+        assert created_user.user_id is not "" and created_user.user_id is not None
+        assert created_user.account_status == "created"

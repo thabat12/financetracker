@@ -106,7 +106,6 @@ async def plaid_exchange_public_token_dependency(
         Given the link token, exchange it with the Plaid API to obtain the actual
         public token, which will be set up in the database for the corresponding user.
     '''
-    
     logger.info(f"plaid_exchange_public_token_dependency called for user: {cur_user}, public token: {public_token}")
     access_token = await exchange_public_token(public_token=public_token, client=client)
     return access_token
@@ -120,7 +119,6 @@ async def db_update_user_access_key_dependency(
         Populate the AccessKey record with the new public token that will be used for
         future API calls.
     '''
-    
     logger.info(f"db_update_user_access_key_dependency called for user: {cur_user}, institution: {ins_details.name}")
     await update_user_access_key(access_key=access_key, cur_user=cur_user, ins_details=ins_details, session=session)
 
@@ -147,7 +145,6 @@ async def link_account(
 
     # fire off background task
     # background_tasks.add_task(db_update_all_data_asynchronously, cur_user)
-
     return LinkAccountResponse(message=LinkAccountResponseEnum.SUCCESS)
 
 """

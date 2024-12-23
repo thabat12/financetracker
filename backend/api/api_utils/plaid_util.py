@@ -2,7 +2,7 @@ from pydantic import BaseModel
 from fastapi import HTTPException, Depends
 import httpx
 from enum import Enum
-from sqlalchemy import update
+from sqlalchemy import update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings, yield_client, yield_db, logger
@@ -127,7 +127,24 @@ async def db_update_institution_details(request: LinkAccountRequest, session: As
         url=institution_url
     )
 
-    session.add(new_ins)
+    # doing this in a very similar "batch"-style to avoid errors with concurrent link accounts
+    smt = text(f"""
+        INSERT INTO {Institution.__tablename__} (institution_id, name, supports_transactions, supports_investments, logo, url)
+            VALUES (:institution_id, :institution_name, :supports_transactions, :supports_investments, :logo, :url)
+        ON CONFLICT (institution_id)
+            DO NOTHING;
+    """)
+
+    params = {
+        "institution_id": institution_id,
+        "institution_name": institution_name,
+        "supports_transactions": "transactions" in supported_products,
+        "supports_investments": "investments" in supported_products,
+        "logo": institution_logo,
+        "url": institution_url
+    }
+
+    await session.execute(smt, params)
     await session.commit()
     logger.info(f'/plaid/db_update_institution_details: {institution_id} added to the database, and we are done!')
     return new_ins
