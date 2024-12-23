@@ -473,7 +473,6 @@ def execute_account_insert_update_statement(
 
     return smt, params
 
-# TODO: figure this out by running a testcase on a much smaller account information plaid account...
 def execute_account_delete_statement(
         cur_user: str,
         refreshed_account_data: List[PlaidAccount]
@@ -548,6 +547,18 @@ async def db_get_accounts(
                            all_accounts)
     
     return GetAccountsResponse(message=GetAccountsResponseEnum.SUCCESS, accounts=all_accounts)
+
+async def db_update_investments(
+        cur_user: str,
+        user_key: bytes,
+        access_keys: list[AccessKey],
+        all_institutions: list[Institution],
+        session: AsyncSession,
+        client: httpx.AsyncClient
+    ) -> None:
+
+    pass
+
 
 
 '''
