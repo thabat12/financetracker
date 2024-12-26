@@ -60,8 +60,7 @@ def test_api_root():
     resp = requests.get(TEST_API_URL)
     assert resp.status_code == 200
 
-@pytest.mark.skip
-def test_link_1_plaid_account_no_async(clear_database):
+def test_link_1_plaid_account(clear_database):
     """
         ensure:
             institution details are populated
@@ -167,7 +166,6 @@ def test_link_multiple_institutions_to_one_account(clear_database):
     Asynchronous testing of the link_plaid endpoint
 """
 
-@pytest.mark.skip
 @pytest.mark.asyncio
 async def test_link_1_plaid_account_async(clear_database):
     """
@@ -217,7 +215,6 @@ def async_link_plaid_account_endpoint(async_client: httpx.AsyncClient, authoriza
                         },
                         json={"institution_id": ins_id})
 
-@pytest.mark.skip
 @pytest.mark.asyncio
 async def test_link_5_plaid_accounts_async(clear_database):
     """
@@ -226,7 +223,7 @@ async def test_link_5_plaid_accounts_async(clear_database):
         issues, but we can assume that our background tasks and everything is working at a somewhat-expected 
         level.
     """
-    READ_TIMEOUT = 20
+    READ_TIMEOUT = 60
     USERS = 5
 
     created_users = [create_mock_google_user_endpoint() for _ in range(USERS)]

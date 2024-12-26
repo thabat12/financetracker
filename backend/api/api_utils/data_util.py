@@ -4,9 +4,10 @@ from pydantic import BaseModel
 from datetime import timedelta
 from logging import Logger
 from fastapi import APIRouter, HTTPException, Header, BackgroundTasks, Depends
-from sqlalchemy import select, update, case, delete, text, and_, or_
+from sqlalchemy import select, insert, update, case, delete, text, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
+import uuid
 
 from api.config import settings, logger, yield_db, yield_client, get_global_session
 from api.api_utils.auth_util import verify_token
@@ -81,7 +82,61 @@ class PlaidTransaction(BaseModel):
     personal_finance_category: PlaidTransactionPersonalFinanceCategory | None
     personal_finance_category_icon_url: str | None
     transaction_id: str | None
-    website: str | None         
+    website: str | None  
+
+class PlaidHolding(BaseModel):
+    account_id: str
+    cost_basis: Optional[float] = None
+    institution_price: float
+    institution_price_as_of: Optional[datetime] = None
+    institution_price_datetime: Optional[datetime] = None
+    institution_value: float
+    iso_currency_code: Optional[str] = None
+    quantity: float
+    security_id: str
+    unofficial_currency_code: Optional[str] = None
+    vested_quantity: Optional[float] = None
+    vested_value: Optional[float] = None
+    institution_id: Optional[str] = None
+
+class PlaidOptionContract(BaseModel):
+    contract_type: str
+    expiration_date: datetime
+    strike_price: float
+    underlying_security_ticker: str
+
+class PlaidYieldRate(BaseModel):
+    percentage: float
+    type: Optional[str] = None
+
+class PlaidFixedIncome(BaseModel):
+    yield_rate: Optional[PlaidYieldRate]
+    maturity_date: Optional[datetime] = None
+    issue_date: Optional[str] = None
+    face_value: Optional[float] = None
+
+class PlaidSecurity(BaseModel):
+    close_price: Optional[float] = None
+    close_price_as_of: Optional[datetime] = None
+    cusip: Optional[str] = None
+    fixed_income: Optional[PlaidFixedIncome] = None
+    industry: Optional[str] = None
+    institution_id: Optional[str] = None
+    institution_security_id: Optional[str] = None
+    is_cash_equivalent: Optional[bool] = None
+    isin: Optional[str] = None
+    iso_currency_code: Optional[str] = None
+    market_identifier_code: Optional[str] = None
+    name: Optional[str] = None
+    option_contract: Optional[PlaidOptionContract] = None
+    proxy_security_id: Optional[str] = None
+    sector: Optional[str] = None
+    security_id: str
+    sedol: Optional[str] = None
+    ticker_symbol: Optional[str] = None
+    type: Optional[str] = None
+    unofficial_currency_code: Optional[str] = None
+    update_datetime: Optional[datetime] = None       
 
 class PlaidRefreshTransactionsResponse(BaseModel):
     added: Optional[List[PlaidTransaction]] = None
@@ -149,6 +204,70 @@ def decrypt_transaction_data(transaction: Transaction, user_key: bytes) -> PTran
         account_id=transaction.account_id,
         merchant_id=transaction.merchant_id,
         institution_id=transaction.institution_id
+    )
+
+# helper method for encrypting holdings
+def encrypt_if_not_null(dataobj: str | float, user_key: bytes) -> bytes | None:
+    if dataobj is not None:
+        if type(dataobj) == str:
+            return encrypt_data(bytes(dataobj, encoding="utf-8"), user_key)
+        elif type(dataobj) == float:
+            return encrypt_float(dataobj, user_key)
+        else:
+            raise Exception(f"have not implemented encrypt_if_not_null on type: {type(dataobj)}")
+    else:
+        return None
+
+# convert plaid response to security model to be compatible with database
+def plaid_security_data_to_security_model(plaid_security: PlaidSecurity):
+    return Security(
+        security_id=plaid_security.security_id,
+        institution_security_id=plaid_security.institution_security_id,
+        name=plaid_security.name,
+        ticker_symbol=plaid_security.ticker_symbol,
+        is_cash_equivalent=plaid_security.is_cash_equivalent,  # Not encrypted
+        type=plaid_security.type,
+        close_price=plaid_security.close_price,
+        close_price_as_of=plaid_security.close_price_as_of,
+        update_datetime=plaid_security.update_datetime,
+        iso_currency_code=plaid_security.iso_currency_code,
+        unofficial_currency_code=plaid_security.unofficial_currency_code,
+        market_identifier_code=plaid_security.market_identifier_code,
+        sector=plaid_security.sector,
+        industry=plaid_security.industry,
+        option_contract_type=plaid_security.option_contract.contract_type \
+            if plaid_security.option_contract else None,
+        option_expiration_date=plaid_security.option_contract.expiration_date \
+            if plaid_security.option_contract else None,
+        option_strike_price=plaid_security.option_contract.strike_price \
+            if plaid_security.option_contract else None,
+        option_underlying_ticker=plaid_security.option_contract.underlying_security_ticker \
+            if plaid_security.option_contract else None,
+        percentage=plaid_security.fixed_income.yield_rate.percentage \
+            if plaid_security.fixed_income else None,
+        issue_date=plaid_security.fixed_income.issue_date \
+            if plaid_security.fixed_income else None,
+        face_value=plaid_security.fixed_income.face_value \
+            if plaid_security.fixed_income else None
+    )
+
+def encrypt_holdings_model(plaid_holding: PlaidHolding, cur_user: str, user_key: bytes):
+    return Holding(
+        # data
+        institution_price=encrypt_float(plaid_holding.institution_price, user_key),
+        institution_price_as_of=plaid_holding.institution_price_as_of,
+        institution_value=encrypt_float(plaid_holding.institution_value, user_key),
+        cost_basis=encrypt_if_not_null(plaid_holding.cost_basis, user_key),
+        quantity=encrypt_float(plaid_holding.quantity, user_key),
+        iso_currency_code=plaid_holding.iso_currency_code,
+        unofficial_currency_code=plaid_holding.unofficial_currency_code,
+        vested_quantity=encrypt_if_not_null(plaid_holding.vested_quantity, user_key),
+        vested_value=encrypt_if_not_null(plaid_holding.vested_value, user_key),
+        # relations
+        user_id=cur_user,
+        account_id=plaid_holding.account_id,
+        security_id=plaid_holding.security_id,
+        institution_id=plaid_holding.institution_id
     )
 
 # READ ONLY: only retrieve transactions based on the current user selected
@@ -315,7 +434,6 @@ async def db_update_transactions(
     ) -> None:
     
     for cur_institution, cur_access_key in zip(all_institutions, access_keys):
-        print("iterating cur_institution", cur_institution.institution_id, "and access key", cur_access_key.access_key_id)
         if not cur_institution.supports_transactions:
             continue
         
@@ -392,8 +510,6 @@ async def db_update_transactions(
             await session.execute(insert_smt, updated_transaction_params)
         if removed:
             await session.execute(delete_smt)
-
-        print("just updated the transaction values for institution id", cur_institution.institution_id)
 
         await session.commit()
 
@@ -548,6 +664,101 @@ async def db_get_accounts(
     
     return GetAccountsResponse(message=GetAccountsResponseEnum.SUCCESS, accounts=all_accounts)
 
+async def plaid_get_refreshed_investments(
+        user_key: bytes,
+        user_access_keys: List[AccessKey],
+        all_institutions: List[Institution],
+        client: httpx.AsyncClient
+    ) -> tuple[List[PlaidHolding], List[PlaidSecurity]]:
+    all_holdings = []
+    all_securities = []
+
+    for cur_institution, cur_user_access_key in zip(all_institutions, user_access_keys):
+
+        # no investments means cannot get this data :(
+        if not cur_institution.supports_investments:
+            continue
+
+        decrypted_user_access_key: str = decrypt_access_key(access_key=cur_user_access_key.access_key, \
+                                                            user_key=user_key)
+        
+        resp = await client.post(
+                f'{settings.test_plaid_url}/investments/holdings/get',
+                headers={'Content-Type': 'application/json'},
+                json={
+                    'client_id': settings.test_plaid_client_id,
+                    'secret': settings.plaid_secret,
+                    'access_token': decrypted_user_access_key
+                }
+            )
+        
+        resp = resp.json()
+        holdings_data = resp['holdings']
+        security_data = resp['securities']
+
+        holdings_data = [PlaidHolding.model_validate({**obj, "institution_id": cur_institution.institution_id}) for obj in holdings_data]
+        security_data = [PlaidSecurity.model_validate(obj) for obj in security_data]
+
+        print(holdings_data, security_data)
+
+        all_holdings.extend(holdings_data)
+        all_securities.extend(security_data)
+
+    return all_holdings, all_securities
+
+def execute_security_insert_update_statement(refreshed_securities: List[Security]) -> tuple[text, dict]:
+    # get the securities values & params
+    securities_values = []
+    securities_params = {}
+
+    for ind, refreshed_security in enumerate(refreshed_securities):
+        refreshed_security: Security
+        txt = f"('{refreshed_security.security_id}', :{ind}_institution_security_id, :{ind}_name, :{ind}_ticker_symbol, " + \
+            f":{ind}_is_cash_equivalent, :{ind}_type, :{ind}_close_price, :{ind}_close_price_as_of, :{ind}_update_datetime, :{ind}_iso_currency_code, " + \
+            f":{ind}_unofficial_currency_code, :{ind}_market_identifier_code, :{ind}_sector, :{ind}_industry, :{ind}_option_contract_type, " + \
+            f":{ind}_option_expiration_date, :{ind}_option_strike_price, :{ind}_option_underlying_ticker, :{ind}_percentage, " + \
+            f":{ind}_maturity_date, :{ind}_issue_date, :{ind}_face_value)"
+        
+        securities_values.append(txt)
+
+        securities_params.update({
+            f"{ind}_institution_security_id": refreshed_security.institution_security_id,
+            f"{ind}_name": refreshed_security.name,
+            f"{ind}_ticker_symbol": refreshed_security.ticker_symbol,
+            f"{ind}_is_cash_equivalent": refreshed_security.is_cash_equivalent,
+            f"{ind}_type": refreshed_security.type,
+            f"{ind}_close_price": refreshed_security.close_price,
+            f"{ind}_close_price_as_of": refreshed_security.close_price_as_of,
+            f"{ind}_update_datetime": refreshed_security.update_datetime,
+            f"{ind}_iso_currency_code": refreshed_security.iso_currency_code,
+            f"{ind}_unofficial_currency_code": refreshed_security.unofficial_currency_code,
+            f"{ind}_market_identifier_code": refreshed_security.market_identifier_code,
+            f"{ind}_sector": refreshed_security.sector,
+            f"{ind}_industry": refreshed_security.industry,
+            f"{ind}_option_contract_type": refreshed_security.option_contract_type,
+            f"{ind}_option_expiration_date": refreshed_security.option_expiration_date,
+            f"{ind}_option_strike_price": refreshed_security.option_strike_price,
+            f"{ind}_option_underlying_ticker": refreshed_security.option_underlying_ticker,
+            f"{ind}_percentage": refreshed_security.percentage,
+            f"{ind}_maturity_date": refreshed_security.maturity_date,
+            f"{ind}_issue_date": refreshed_security.issue_date,
+            f"{ind}_face_value": refreshed_security.face_value
+        })
+
+    securities_smt = text(f"""
+        INSERT INTO {Security.__tablename__}
+            VALUES {', '.join(securities_values)}
+        ON CONFLICT (security_id)
+        DO UPDATE SET
+            close_price=EXCLUDED.close_price,
+            close_price_as_of=EXCLUDED.close_price_as_of,
+            update_datetime=EXCLUDED.update_datetime,
+            option_expiration_date=EXCLUDED.option_expiration_date;
+    """)
+
+    return securities_smt, securities_params
+        
+
 async def db_update_investments(
         cur_user: str,
         user_key: bytes,
@@ -556,10 +767,43 @@ async def db_update_investments(
         session: AsyncSession,
         client: httpx.AsyncClient
     ) -> None:
+    print("db_update_investments called")
+    # holdings are the user's actual data, whereas securities are metadata over a specific type of asset
+    refreshed_holdings, refreshed_securities = await plaid_get_refreshed_investments( \
+        user_key=user_key, user_access_keys=access_keys, all_institutions=all_institutions, client=client)
 
-    pass
+    print("mapping all investment holdings to ORM...")
+    # translate all holdings into models
+    refreshed_holdings: List[Holding] = [
+        encrypt_holdings_model(
+            plaid_holding=plaid_holding, 
+            user_key=user_key, 
+            cur_user=cur_user
+        ) for plaid_holding in refreshed_holdings
+    ]
 
+    print("mapping all securities to ORM...")
+    refreshed_securities: List[Security] = [
+        plaid_security_data_to_security_model(plaid_security=plaid_security) \
+            for plaid_security in refreshed_securities
+    ]
 
+    print("generating the insert update statements for securities...")
+    securities_smt, securities_params = execute_security_insert_update_statement(refreshed_securities)
+
+    print("sending all data with...")
+    # holdings are a bit more simple
+    print(refreshed_holdings)
+    holdings_delete_smt = delete(Holding).where(and_(Holding.user_id == cur_user))
+    print("add all just called for refreshed holdings")
+
+    print("executing securities statements")
+    await session.execute(securities_smt, securities_params)
+    print("executing holdings delete statement")
+    await session.execute(holdings_delete_smt)
+    session.add_all(refreshed_holdings)
+    print("commit time baby")
+    await session.commit()
 
 '''
     Asynchronous DB updates: on every login and link account, there will be an asynchronous
@@ -595,4 +839,6 @@ async def db_update_all_data_asynchronously(cur_user: str):
                                     all_institutions=institutions, session=session, client=client)
             await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
                                             access_keys=access_keys, session=session, client=client)
+            await db_update_investments(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
+                                        all_institutions=institutions, session=session, client=client)
             await db_update_transaction_account_sync(access_keys=access_keys, session=session)

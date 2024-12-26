@@ -1,4 +1,4 @@
-from db.models import User, Account, Merchant, Transaction, Subscription, Base
+from db.models import Base
 from db.config import Config
 
 from sqlalchemy import create_engine

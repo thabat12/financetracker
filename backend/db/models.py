@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean, LargeBinary, Text
+from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean, LargeBinary, Text, BigInteger
 from sqlalchemy.orm import relationship, declarative_base
 
 from pydantic import BaseModel, Field
@@ -33,10 +33,9 @@ class User(Base):
     # one to many
     accounts = relationship('Account', backref='user', lazy='select', cascade='all, delete-orphan')
     transactions = relationship('Transaction', backref='user', lazy='select', cascade='all, delete-orphan')
-    subscriptions = relationship('Subscription', backref='user', lazy='select', cascade='all, delete-orphan')
     auth_sessions = relationship('AuthSession', backref='user', lazy='select', cascade='all, delete-orphan')
     access_keys = relationship('AccessKey', backref='user', lazy='select', cascade='all, delete-orphan')
-    investment_holdings = relationship('InvestmentHolding', backref='user', lazy='select', cascade='all, delete-orphan')
+    investment_holdings = relationship('Holding', backref='user', lazy='select', cascade='all, delete-orphan')
 
 class GoogleUser(Base):
     __tablename__ = 'google_user'
@@ -107,7 +106,6 @@ class Merchant(Base):
 
     # one to many
     transactions = relationship('Transaction', backref='merchant', lazy='select')
-    subscriptions = relationship('Subscription', backref='merchant', lazy='select')
 
 class Transaction(Base):
     __tablename__ = 'transaction'
@@ -136,59 +134,56 @@ class Transaction(Base):
     institution_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Institution.__tablename__}.institution_id'), nullable=True)
 
 class Security(Base):
-    __tablename__ = 'security'
+    __tablename__ = "security"
 
     security_id = Column(String(Constants.IDSizes.LARGE), primary_key=True)
-    institution_security_id = Column(LargeBinary, nullable=True)
+    institution_security_id = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
 
-    name = Column(LargeBinary, nullable=False)
-    ticker_symbol = Column(LargeBinary, nullable=True)
+    name = Column(String(Constants.IDSizes.LARGE), nullable=True)
+    ticker_symbol = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
     is_cash_equivalent = Column(Boolean, nullable=True)
-    type = Column(LargeBinary, nullable=True)
+    type = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
 
-    close_price = Column(LargeBinary, nullable=True)
-    close_price_as_of = Column(LargeBinary, nullable=True)
+    close_price = Column(Float, nullable=True)
+    close_price_as_of = Column(DateTime, nullable=True)
     update_datetime = Column(DateTime, nullable=True)
     iso_currency_code = Column(String(10), nullable=True)
     unofficial_currency_code = Column(String(10), nullable=True)
     market_identifier_code = Column(String(10), nullable=True)
-    sector = Column(LargeBinary, nullable=True)
-    industry = Column(LargeBinary, nullable=True)
+    sector = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+    industry = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
 
     # if you have options, this is a field on its own
-    option_contract_type = Column(LargeBinary, nullable=True)
+    option_contract_type = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
     option_expiration_date = Column(DateTime, nullable=True)
-    option_strike_price = Column(LargeBinary, nullable=True)
-    option_underlying_ticker = Column(LargeBinary, nullable=True)
+    option_strike_price = Column(Float, nullable=True)
+    option_underlying_ticker = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
 
     # if you have bonds
-    percentage = Column(LargeBinary, nullable=True)
-    type = Column(LargeBinary, nullable=True)
-    maturity_date = Column(LargeBinary, nullable=True)
-    issue_date = Column(LargeBinary, nullable=True)
-    face_value = Column(LargeBinary, nullable=True)
-
-    # relationships
-    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), nullable=True)
-    account_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Account.__tablename__}.account_id'), nullable=True)
-    institution_id = Column(String(Constants.IDSizes.MEDIUM), \
-                            ForeignKey(f'{Institution.__tablename__}.institution_id'), nullable=True)
+    percentage = Column(Float, nullable=True)
+    maturity_date = Column(DateTime, nullable=True)
+    issue_date = Column(DateTime, nullable=True)
+    face_value = Column(Float, nullable=True)
 
 class Holding(Base):
     __tablename__ = "holding"
 
-    holding_id = Column(String(Constants.IDSizes.LARGE), primary_key=True)
+    # I am getting holding data if it matches user-key anyways
+    holding_id = Column(Integer, primary_key=True, autoincrement=True)
     institution_price = Column(LargeBinary, nullable=False)
-    institution_price_as_of = Column(LargeBinary, nullable=True)
+    institution_price_as_of = Column(DateTime, nullable=True) # this is not super sensitive info
     institution_value = Column(LargeBinary, nullable=False)
     cost_basis = Column(LargeBinary, nullable=True)
     quantity = Column(LargeBinary, nullable=False)
-    iso_currency_code = Column(LargeBinary, nullable=True)
+    iso_currency_code = Column(String(Constants.IDSizes.MEDIUM), nullable=True) # not encrypted (bc why lol)
     unofficial_currency_code = Column(LargeBinary, nullable=True)
     vested_quantity = Column(LargeBinary, nullable=True)
     vested_value = Column(LargeBinary, nullable=True)
 
     # relationships
+    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), \
+                     nullable=False)
+
     account_id = Column(String(Constants.IDSizes.MEDIUM), \
                               ForeignKey(f'{Account.__tablename__}.account_id'), nullable=False)
     
