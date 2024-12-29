@@ -2,15 +2,11 @@ from enum import Enum
 import asyncio
 from pydantic import BaseModel
 from datetime import timedelta
-from logging import Logger
-from fastapi import APIRouter, HTTPException, Header, BackgroundTasks, Depends
 from sqlalchemy import select, insert, update, case, delete, text, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
-import uuid
 
-from api.config import settings, logger, yield_db, yield_client, get_global_session
-from api.api_utils.auth_util import verify_token
+from api.config import settings, logger, get_global_session
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data, encrypt_float, decrypt_float
 from db.models import *
 
@@ -184,6 +180,18 @@ class GetAccountsResponse(BaseModel):
 # use session object and the global key to identify the current user_key in bytes
 async def decrypt_user_key(cur_user: str, session: AsyncSession) -> bytes:
     cur_user_encrypted_key: bytes = await session.scalar(select(User.user_key).where(User.user_id == cur_user))
+
+    # TODO: fix issues related to this
+    if not cur_user_encrypted_key:
+        print("ther is no user to be found... let's take a look at everything on this database for user")
+        all_users = await session.execute(select(User))
+        all_users = all_users.all()
+        print("all users are...")
+        for user in all_users:
+            print(f"user_id: {user.user_id} | user_key: {user.user_key}")
+        print("... and those are all users")
+        raise Exception("the current user encrypted key is not found!")
+
     user_key: bytes = decrypt_data(cur_user_encrypted_key, db_key_bytes)
 
     return user_key
@@ -672,13 +680,15 @@ async def plaid_get_refreshed_investments(
     ) -> tuple[List[PlaidHolding], List[PlaidSecurity]]:
     all_holdings = []
     all_securities = []
+    seen_securities = set()
 
     for cur_institution, cur_user_access_key in zip(all_institutions, user_access_keys):
 
         # no investments means cannot get this data :(
         if not cur_institution.supports_investments:
             continue
-
+        
+        print('getting investments data from institution:', cur_institution.institution_id)
         decrypted_user_access_key: str = decrypt_access_key(access_key=cur_user_access_key.access_key, \
                                                             user_key=user_key)
         
@@ -699,10 +709,13 @@ async def plaid_get_refreshed_investments(
         holdings_data = [PlaidHolding.model_validate({**obj, "institution_id": cur_institution.institution_id}) for obj in holdings_data]
         security_data = [PlaidSecurity.model_validate(obj) for obj in security_data]
 
-        print(holdings_data, security_data)
-
         all_holdings.extend(holdings_data)
-        all_securities.extend(security_data)
+        # duplicate security ids may exist...
+        for security in security_data:
+            if security.security_id not in seen_securities:
+                all_securities.append(security)
+
+            seen_securities.add(security.security_id)
 
     return all_holdings, all_securities
 
@@ -791,17 +804,17 @@ async def db_update_investments(
     print("generating the insert update statements for securities...")
     securities_smt, securities_params = execute_security_insert_update_statement(refreshed_securities)
 
-    print("sending all data with...")
-    # holdings are a bit more simple
-    print(refreshed_holdings)
-    holdings_delete_smt = delete(Holding).where(and_(Holding.user_id == cur_user))
-    print("add all just called for refreshed holdings")
+    if refreshed_securities:
+        print("executing securities statements")
+        await session.execute(securities_smt, securities_params)
 
-    print("executing securities statements")
-    await session.execute(securities_smt, securities_params)
-    print("executing holdings delete statement")
-    await session.execute(holdings_delete_smt)
-    session.add_all(refreshed_holdings)
+    if refreshed_holdings:
+        print("sending all data with...")
+        # holdings are a bit more simple
+        holdings_delete_smt = delete(Holding).where(and_(Holding.user_id == cur_user))
+        await session.execute(holdings_delete_smt)
+        session.add_all(refreshed_holdings)
+    
     print("commit time baby")
     await session.commit()
 
@@ -819,26 +832,41 @@ async def db_update_transaction_account_sync(access_keys: List[AccessKey], sessi
 
     await session.commit()
 
-async def db_update_all_data_asynchronously(cur_user: str):
-    
-    logger.info(f'db_update_all_data_asynchronously for: {cur_user}')
+"""
+    db_update_all_data_asynchronously:
+        this method goes through all the user's data through Plaid API refresh calls and updates the
+        database with the proper user-associated data. 
 
-    global_session = get_global_session()
+"""
+async def db_update_all_data(cur_user: str, session: AsyncSession, client: httpx.AsyncClient):
+    user_key: bytes = await decrypt_user_key(cur_user=cur_user, session=session)
 
-    async with global_session() as session:
-        async with httpx.AsyncClient(timeout=30) as client:
+    access_keys, institutions = await db_get_access_key_updates(cur_user=cur_user, session=session)
+    access_keys: list[AccessKey]
+    institutions: list[Institution]
 
-            user_key: bytes = await decrypt_user_key(cur_user=cur_user, session=session)
+    # update transactions & accounts with all the necessary data required
+    await db_update_accounts(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
+                            all_institutions=institutions, session=session, client=client)
+    await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
+                                    access_keys=access_keys, session=session, client=client)
+    await db_update_investments(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
+                                all_institutions=institutions, session=session, client=client)
+    await db_update_transaction_account_sync(access_keys=access_keys, session=session)
 
-            access_keys, institutions = await db_get_access_key_updates(cur_user=cur_user, session=session)
-            access_keys: list[AccessKey]
-            institutions: list[Institution]
 
-            # update transactions & accounts with all the necessary data required
-            await db_update_accounts(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
-                                    all_institutions=institutions, session=session, client=client)
-            await db_update_transactions(cur_user=cur_user, user_key=user_key, all_institutions=institutions, \
-                                            access_keys=access_keys, session=session, client=client)
-            await db_update_investments(cur_user=cur_user, user_key=user_key, access_keys=access_keys, \
-                                        all_institutions=institutions, session=session, client=client)
-            await db_update_transaction_account_sync(access_keys=access_keys, session=session)
+async def db_update_all_data_asynchronously(cur_user: str, session: AsyncSession = None, \
+                                            client: httpx.AsyncClient = None):
+
+    if not session and not client:
+        logger.info(f'db_update_all_data_asynchronously for: {cur_user}')
+        global_session = get_global_session()
+
+        async with global_session() as session:
+            async with httpx.AsyncClient(timeout=30) as client:
+                await db_update_all_data(cur_user=cur_user, session=session, client=client)
+    else:
+        logger.info(f'db_update_all_data for: {cur_user} -- synchronous wait')
+        await db_update_all_data(cur_user=cur_user, session=session, client=client)
+
+            

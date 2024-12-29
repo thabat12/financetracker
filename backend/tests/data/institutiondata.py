@@ -5,8 +5,10 @@ from db.models import Institution, AccessKey
 class InstitutionIDs:
     plaid_bank = 'ins_109508' # transactions & investments
     first_platypus_bank = 'ins_109510' # transactions
-    tartan_bank = 'ins_109512' # transactions & investments
+    houndstooth_bank = 'ins_109512' # transactions & investments
     pnc = 'ins_13' # transactions & investments
+    tartan_dominion = 'ins_43'
+
 
 _institution_metadata = {
     'ins_109508' : {
@@ -28,6 +30,11 @@ _institution_metadata = {
         'name': 'PNC',
         'supports_transactions': True,
         'supports_investments': True  # Supports both transactions and investments
+    },
+    'ins_43': {
+        'name': 'Tartan-Dominion Bank',
+        'supports_transactions': True,
+        'supports_investments': True
     }
 }
 

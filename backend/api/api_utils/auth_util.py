@@ -32,8 +32,6 @@ GOOGLE_AUTH_USERINFO_URL = 'https://www.googleapis.com/oauth2/v1/userinfo'
 
 '''
     Models: all the useful models that the API uses to parse and return responses to the client
-
-
 '''
 class CreateAccountRequest(BaseModel):
     user_type: str

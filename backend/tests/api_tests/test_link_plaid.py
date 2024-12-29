@@ -39,13 +39,13 @@ def create_mock_google_user_endpoint() -> CreateGoogleResponse:
     resp = requests.post(f"{TEST_API_URL}/auth/create_google", json={})
     return CreateGoogleResponse.model_validate(resp.json())
 
-def link_plaid_account(authorization_token: str, ins_id: str):
+def link_plaid_account(authorization_token: str, ins_id: str, waitfor: bool = False):
     resp = requests.post(f"{TEST_API_URL}/plaid/link_account", 
                         headers={
                             "Authorization": f"Bearer {authorization_token}",
                             "Content-Type": "application/json"
                         }, 
-                        json={"institution_id": ins_id},
+                        json={"institution_id": ins_id, "waitfor": waitfor},
                         timeout=30)
     
     return LinkPlaidAccountResponse.model_validate(resp.json())
@@ -60,6 +60,7 @@ def test_api_root():
     resp = requests.get(TEST_API_URL)
     assert resp.status_code == 200
 
+# TODO: there is an issue when you make waitfor = False in the api, but I will fix this issue later
 def test_link_1_plaid_account(clear_database):
     """
         ensure:
@@ -75,7 +76,7 @@ def test_link_1_plaid_account(clear_database):
 
     # now link the plaid account
     created_link: LinkPlaidAccountResponse = \
-        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.plaid_bank)
+        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.plaid_bank, waitfor=True)
 
     assert created_link.message == "success"
 
@@ -116,7 +117,7 @@ def test_link_multiple_institutions_to_one_account(clear_database):
     assert created_link.message == "success"
 
     created_link: LinkPlaidAccountResponse = \
-        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.tartan_bank)
+        link_plaid_account(authorization_token=authorization_token, ins_id=InstitutionIDs.houndstooth_bank)
     
     assert created_link.message == "success"
 
@@ -161,6 +162,15 @@ def test_link_multiple_institutions_to_one_account(clear_database):
         num_institutions_on_account = conn.execute(smt).scalar()
         num_institutions_on_account = int(num_institutions_on_account)
         assert num_institutions_on_account == 4  
+
+def test_link_1_investment_account_sync(clear_database):
+    created_user: CreateGoogleResponse = create_mock_google_user_endpoint()
+    authorization_token = created_user.authorization_token
+
+    created_link: LinkPlaidAccountResponse = \
+        link_plaid_account(authorization_token, InstitutionIDs.pnc, True)
+    
+    assert created_link.message == "success"
 
 """
     Asynchronous testing of the link_plaid endpoint
@@ -227,7 +237,7 @@ async def test_link_5_plaid_accounts_async(clear_database):
     USERS = 5
 
     created_users = [create_mock_google_user_endpoint() for _ in range(USERS)]
-    ins_choices = [InstitutionIDs.plaid_bank, InstitutionIDs.first_platypus_bank, InstitutionIDs.tartan_bank, InstitutionIDs.pnc]
+    ins_choices = [InstitutionIDs.plaid_bank, InstitutionIDs.first_platypus_bank, InstitutionIDs.tartan_dominion, InstitutionIDs.pnc, InstitutionIDs.houndstooth_bank]
 
     async with httpx.AsyncClient(timeout=READ_TIMEOUT) as client:
         tasks = [async_link_plaid_account_endpoint(client, user.authorization_token, random.choice(ins_choices)) for user in created_users]

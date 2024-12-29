@@ -65,6 +65,7 @@ class LinkAccountResponse(BaseModel):
 class LinkAccountRequest(BaseModel):
     institution_id: str
     custom_user: str | None = None
+    waitfor: bool = False
 
 '''
     Util functions: 
@@ -108,7 +109,7 @@ async def db_update_institution_details(request: LinkAccountRequest, session: As
     if cur_institution is not None:
         logger.info(f'/plaid/db_update_institution_details: {institution_id} already exists in the db! no need for update!')
         # !!! EARLY RETURN (bad practice but yeah)
-        return await session.get(Institution, institution_id)
+        return cur_institution
     
     institution_data = await plaid_get_institution_by_id(institution_id = institution_id)
     logger.info(f'/plaid/db_update_institution_details: {institution_id} the plaid endpoint is called and data retrieved')
@@ -117,7 +118,7 @@ async def db_update_institution_details(request: LinkAccountRequest, session: As
     institution_name = institution_data.institution.name
     institution_logo = institution_data.institution.logo
     institution_url = institution_data.institution.url
-
+    
     new_ins = Institution(
         institution_id=institution_id,
         name=institution_name,
