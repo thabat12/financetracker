@@ -16,6 +16,8 @@ jobs:
           python-version: 3.11
       - name: Install Python Dependencies
         run: |
+          pwd
+          ls -la
           cd backend
           make download_dependencies
       - name: Setup AWS Account
