@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+# exit on failure immediately, print all commands,
+# update the installer (security reasons), install make
+RUN set -ex \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y make
+
+# clean up after the updates
+RUN set -ex \
+    && apt-get autoremove -y \
+    && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY ./api ./api
+COPY ./db ./db
+# pretty strange, but for the sake of time lets just copy the tests folder
+COPY ./tests ./tests
+COPY ./envs ./envs
+COPY ./settings.py ./settings.py
+COPY ./Makefile ./Makefile
+
+RUN pip install -r ./tests/requirements.txt

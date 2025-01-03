@@ -5,11 +5,12 @@ from enum import Enum
 from sqlalchemy import update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.config import settings, yield_client, yield_db, logger
+from settings import settings
+from api.config import logger
 from db.models import *
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data
 
-TEST_PLAID_URL = settings.test_plaid_url
+TEST_PLAID_URL = settings.plaid_url
 
 '''
     Models: 
@@ -80,7 +81,7 @@ async def plaid_get_institution_by_id(institution_id: str) -> InstitutionsGetByI
             },
             json={
                 'institution_id': institution_id,
-                'client_id': settings.test_plaid_client_id,
+                'client_id': settings.plaid_client_id,
                 'secret': settings.plaid_secret,
                 'country_codes': ['US'],
                 'options': {
@@ -171,10 +172,10 @@ async def plaid_get_public_token(ins_details: Institution, client: httpx.AsyncCl
     } if custom_user else {}
 
     try:
-        resp = await client.post(f'{settings.test_plaid_url}/sandbox/public_token/create',
+        resp = await client.post(f'{settings.plaid_url}/sandbox/public_token/create',
                         headers={'Content-Type': 'application/json'},
                         json={
-                            'client_id': settings.test_plaid_client_id,
+                            'client_id': settings.plaid_client_id,
                             'secret': settings.plaid_secret,
                             'institution_id': institution_id,
                             'initial_products': products,
@@ -199,10 +200,10 @@ async def exchange_public_token(public_token: str, client: httpx.AsyncClient) ->
     access_token = None
     try:
         resp = await client.post(
-            f'{settings.test_plaid_url}/item/public_token/exchange',
+            f'{settings.plaid_url}/item/public_token/exchange',
             headers={'Content-Type': 'application/json'},
             json={
-                'client_id': settings.test_plaid_client_id,
+                'client_id': settings.plaid_client_id,
                 'secret': settings.plaid_secret,
                 'public_token': public_token
             }

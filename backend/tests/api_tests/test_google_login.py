@@ -12,13 +12,13 @@ import logging
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-from api.config import settings
+from settings import settings
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__).setLevel(logging.INFO)
 
-TEST_API_URL = f'http://{settings.test_api_host}:{settings.test_api_port}'
+TEST_API_URL = f'http://{settings.api_hostname}:{settings.api_port}'
 
 class CreateGoogleResponse(BaseModel):
     authorization_token: str

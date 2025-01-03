@@ -11,3 +11,4 @@ pytest
 pytest-asyncio
 aiosqlite
 python-dotenv
+httpx

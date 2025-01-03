@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+# exit on failure immediately, print all commands,
+# update the installer (security reasons), install make
+RUN set -ex \
+    && apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y make
+
+# clean up after the updates
+RUN set -ex \
+    && apt-get autoremove -y \
+    && apt-get clean -y \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY ./db ./db
+COPY ./envs/dev.env ./envs/dev.env
+COPY ./Makefile ./Makefile
+
+RUN pip install -r ./db/requirements.txt
+
+CMD ["make", "setup_db", "ENV=./envs/dev.env"]

@@ -6,7 +6,8 @@ from sqlalchemy import select, insert, update, case, delete, text, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 
-from api.config import settings, logger, get_global_session
+from settings import settings
+from api.config import get_global_session, logger
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data, encrypt_float, decrypt_float
 from db.models import *
 
@@ -350,10 +351,10 @@ async def plaid_get_refreshed_transactions(
 
     for _ in range(20):
         resp = await client.post(
-            url=f'{settings.test_plaid_url}/transactions/sync',
+            url=f'{settings.plaid_url}/transactions/sync',
             headers={'Content-Type': 'application/json'},
             json={
-                'client_id': settings.test_plaid_client_id,
+                'client_id': settings.plaid_client_id,
                 'secret': settings.plaid_secret,
                 'access_token': decrypted_access_key,
                 'cursor': transactions_sync_cursor,
@@ -535,10 +536,10 @@ async def plaid_get_refreshed_accounts(
         decrypted_user_access_key: str = decrypt_access_key(access_key=cur_user_access_key.access_key, \
                                                             user_key=user_key)
         resp = await client.post(
-                f'{settings.test_plaid_url}/accounts/get',
+                f'{settings.plaid_url}/accounts/get',
                 headers={'Content-Type':'application/json'},
                 json={
-                    'client_id': settings.test_plaid_client_id,
+                    'client_id': settings.plaid_client_id,
                     'secret': settings.plaid_secret,
                     'access_token': decrypted_user_access_key
                 }
@@ -693,10 +694,10 @@ async def plaid_get_refreshed_investments(
                                                             user_key=user_key)
         
         resp = await client.post(
-                f'{settings.test_plaid_url}/investments/holdings/get',
+                f'{settings.plaid_url}/investments/holdings/get',
                 headers={'Content-Type': 'application/json'},
                 json={
-                    'client_id': settings.test_plaid_client_id,
+                    'client_id': settings.plaid_client_id,
                     'secret': settings.plaid_secret,
                     'access_token': decrypted_user_access_key
                 }

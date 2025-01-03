@@ -9,9 +9,8 @@ from db.models import *
 from api.routes.auth import auth_router
 from api.routes.plaid import plaid_router
 from api.routes.data import data_router
-from api.config import settings
+from settings import settings
 from api.config import set_global_session
-
 
 def bind_paths(app: FastAPI):
     app.include_router(auth_router, prefix='/auth')

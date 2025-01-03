@@ -1,0 +1,10 @@
+python-dotenv
+requests
+sqlalchemy
+pytest-ordering
+pytest
+pytest-asyncio
+httpx
+pydantic-settings
+asyncpg
+psycopg2-binary

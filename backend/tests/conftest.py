@@ -2,9 +2,9 @@
 
 import pytest
 from sqlalchemy import create_engine, text
-from api.config import settings
+from settings import settings
 
-engine = create_engine(settings.test_sqlalchemy_database_uri)
+engine = create_engine(settings.sqlalchemy_database_uri)
 
 @pytest.fixture
 def clear_database(scope="function"):

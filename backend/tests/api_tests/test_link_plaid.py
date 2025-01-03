@@ -3,28 +3,25 @@
     focusing on the client-side interface of the API and are subject to change depending on the
     behavior of the API.
 '''
-import sys
 import asyncio
 import time
-import asyncpg
 import random
 import pytest
 import httpx
 import requests
 import logging
-from dotenv import load_dotenv
 from pydantic import BaseModel
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from api.config import settings
+from settings import settings
 from db.models import *
 from tests.data.institutiondata import *
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__).setLevel(logging.INFO)
 
-TEST_API_URL = f"http://{settings.test_api_host}:{settings.test_api_port}"
+TEST_API_URL = f"http://{settings.api_hostname}:{settings.api_port}"
 
 
 class CreateGoogleResponse(BaseModel):
@@ -51,7 +48,7 @@ def link_plaid_account(authorization_token: str, ins_id: str, waitfor: bool = Fa
     return LinkPlaidAccountResponse.model_validate(resp.json())
 
 # use this to manually validate any institution after linking account
-sql_engine = create_engine(settings.test_sqlalchemy_database_uri)
+sql_engine = create_engine(settings.sqlalchemy_database_uri)
 
 """
     Synchronous testing of the link_plaid endpoint
@@ -198,7 +195,7 @@ async def test_link_1_plaid_account_async(clear_database):
 
     await asyncio.sleep(SLEEP_TIMEOUT)
 
-    async_engine = create_async_engine(settings.test_async_sqlalchemy_database_uri)
+    async_engine = create_async_engine(settings.async_sqlalchemy_database_uri)
 
     async with async_engine.connect() as conn:
         smt = select(Institution).where(Institution.institution_id == InstitutionIDs.plaid_bank)

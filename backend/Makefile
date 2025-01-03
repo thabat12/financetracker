@@ -1,22 +1,22 @@
-include .env
-PG_PASSWORD = $(POSTGRES_PASSWORD)
+#####################
+# LOCAL ENVIRONMENT #
+#####################
 
-MODELS_TARGET = models.py
-
-# python environments
+# python installations
 download_dependencies: ./api/requirements.txt ./db/requirements.txt
 	@cat ./api/requirements.txt ./db/requirements.txt | sort | uniq | xargs pip uninstall -y
 	@cat ./api/requirements.txt ./db/requirements.txt | sort | uniq | xargs pip install
 
-
-# LOCAL TESTING:
-
-# running stuff
+# running the api
 run_api:
-	@uvicorn api.api:api_app --reload --host $(API_HOST) --port $(API_PORT) --log-level debug
+	@python -m api.main api.api:api_app --log-level debug --env_file $(ENV)
 
 run_test_api:
-	@uvicorn api.api:test_app --reload --host $(TEST_API_HOST) --port $(TEST_API_PORT)  --log-level debug
+	@python -m api.main api.api:test_app --log-level debug --env_file $(ENV)
+
+# testing the api with client
+test_api:
+	@python -m tests.main -v --env-file $(ENV)
 
 # database migration solution
 migrate_db: ./db/models.py
@@ -30,9 +30,16 @@ clear_db_cache:
 	@echo "Alembic version directory cleared and version table reset."
 
 # clearing all data in the database
-clear_db:
-	@python -m db.init_db
+setup_db:
+	@python -m db.setup_db --env_file $(ENV)
+
+#####################
+## DEV ENVIRONMENT ##
+#####################
 
 # dockerfile specifics
-docker_up:
-	@docker-compose -f .\docker\docker-compose.yml --env-file ./.env up
+docker_build_dev:
+	@docker-compose -f .\docker\dev\docker-compose.yml --env-file ./envs/dev.env --project-directory . build
+
+docker_up_dev:
+	@docker-compose -f .\docker\dev\docker-compose.yml --env-file ./envs/dev.env --project-directory . up

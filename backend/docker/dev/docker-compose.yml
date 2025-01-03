@@ -1,0 +1,72 @@
+# working directory: financetracker/backend
+# dev is for testing, so all testing env vars are used here
+version: '3'
+services:
+  db:
+    container_name: db
+    build:
+      dockerfile: ./docker/dev/Dockerfile.pg
+    hostname: ${POSTGRES_HOSTNAME}
+    networks:
+      - ${DOCKER_NETWORK}
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  setup-db:
+    container_name: setup-db
+    build:
+      dockerfile: ./docker/dev/Dockerfile.pgsetup
+    networks:
+      - ${DOCKER_NETWORK}
+    command: ["make", "setup_db", "ENV=./envs/dev.env"]
+  api:
+    container_name: api
+    hostname: ${API_HOSTNAME}
+    build:
+      dockerfile: ./docker/dev/Dockerfile.api
+    depends_on:
+      - setup-db
+    networks:
+      - ${DOCKER_NETWORK}
+    ports:
+      - "${API_PORT}:${API_PORT}"
+    command: ["make", "run_test_api", "ENV=./envs/dev.env"]
+    volumes:
+      - ./api:/app/api
+      - ./db:/app/db
+      - ./tests:/app/tests
+  client:
+    container_name: client
+    build:
+      dockerfile: ./docker/dev/Dockerfile.client
+    depends_on:
+      - setup-db
+      - api
+    networks:
+      - ${DOCKER_NETWORK} # client is part of the api network for now
+    ports:
+      - "3000:3000"
+    command: ["make", "test_api", "ENV=./envs/dev.env"]
+  # PSQL client service for troubleshooting
+  # psql-client:
+  #   image: postgres:latest
+  #   container_name: psql-client
+  #   networks:
+  #     - financetracker-network
+  #   depends_on:
+  #     - db
+  #   environment:
+  #     POSTGRES_USER: ${POSTGRES_USER}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  #     POSTGRES_DB: ${POSTGRES_DB}
+  #   entrypoint: ["tail", "-f", "/dev/null"]  # Keeps container running, waits for manual interaction
+networks:
+  financetracker-network:
+    name: ${DOCKER_NETWORK}
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${DOCKER_SUBNET}

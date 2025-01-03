@@ -15,7 +15,8 @@ import string
 import secrets
 
 from db.models import *
-from api.config import settings, logger, yield_db
+from settings import settings
+from api.config import yield_db, logger
 from api.crypto.crypto import encrypt_data, decrypt_data, db_key_bytes
 from api.concurrency.db_lock import acquire_db_session_lock, release_db_session_lock, acquire_db_transaction_lock
 

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import httpx
 
 from db.models import *
-from api.config import yield_db, yield_client, logger
+from api.config import yield_db, logger
 from api.api_utils.auth_util import verify_token, decrypt_user_key
 from api.api_utils.data_util import db_get_accounts, db_get_transactions
 from api.api_utils.data_util import GetAccountsResponse, GetTransactionsResponse
