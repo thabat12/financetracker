@@ -9,3 +9,6 @@ $ conda create -n financetracker python=3.11
 $ conda activate financetracker
 $ pip install -r requirements.txt
 ```
+
+
+setting up the financetracker database:

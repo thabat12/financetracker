@@ -2,14 +2,15 @@ from pydantic import BaseModel
 from fastapi import HTTPException, Depends
 import httpx
 from enum import Enum
-from sqlalchemy import update
+from sqlalchemy import update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.config import settings, yield_client, yield_db, logger
+from settings import settings
+from api.config import logger
 from db.models import *
 from api.crypto.crypto import db_key_bytes, encrypt_data, decrypt_data
 
-TEST_PLAID_URL = settings.test_plaid_url
+TEST_PLAID_URL = settings.plaid_url
 
 '''
     Models: 
@@ -65,11 +66,13 @@ class LinkAccountResponse(BaseModel):
 class LinkAccountRequest(BaseModel):
     institution_id: str
     custom_user: str | None = None
+    waitfor: bool = False
 
 '''
     Util functions: 
 '''
 async def plaid_get_institution_by_id(institution_id: str) -> InstitutionsGetByIdResponse:
+    logger.info("plaid_get_institution_by_id called")
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f'{TEST_PLAID_URL}/institutions/get_by_id',
@@ -78,7 +81,7 @@ async def plaid_get_institution_by_id(institution_id: str) -> InstitutionsGetByI
             },
             json={
                 'institution_id': institution_id,
-                'client_id': settings.test_plaid_client_id,
+                'client_id': settings.plaid_client_id,
                 'secret': settings.plaid_secret,
                 'country_codes': ['US'],
                 'options': {
@@ -107,7 +110,7 @@ async def db_update_institution_details(request: LinkAccountRequest, session: As
     if cur_institution is not None:
         logger.info(f'/plaid/db_update_institution_details: {institution_id} already exists in the db! no need for update!')
         # !!! EARLY RETURN (bad practice but yeah)
-        return await session.get(Institution, institution_id)
+        return cur_institution
     
     institution_data = await plaid_get_institution_by_id(institution_id = institution_id)
     logger.info(f'/plaid/db_update_institution_details: {institution_id} the plaid endpoint is called and data retrieved')
@@ -116,7 +119,7 @@ async def db_update_institution_details(request: LinkAccountRequest, session: As
     institution_name = institution_data.institution.name
     institution_logo = institution_data.institution.logo
     institution_url = institution_data.institution.url
-
+    
     new_ins = Institution(
         institution_id=institution_id,
         name=institution_name,
@@ -126,7 +129,24 @@ async def db_update_institution_details(request: LinkAccountRequest, session: As
         url=institution_url
     )
 
-    session.add(new_ins)
+    # doing this in a very similar "batch"-style to avoid errors with concurrent link accounts
+    smt = text(f"""
+        INSERT INTO {Institution.__tablename__} (institution_id, name, supports_transactions, supports_investments, logo, url)
+            VALUES (:institution_id, :institution_name, :supports_transactions, :supports_investments, :logo, :url)
+        ON CONFLICT (institution_id)
+            DO NOTHING;
+    """)
+
+    params = {
+        "institution_id": institution_id,
+        "institution_name": institution_name,
+        "supports_transactions": "transactions" in supported_products,
+        "supports_investments": "investments" in supported_products,
+        "logo": institution_logo,
+        "url": institution_url
+    }
+
+    await session.execute(smt, params)
     await session.commit()
     logger.info(f'/plaid/db_update_institution_details: {institution_id} added to the database, and we are done!')
     return new_ins
@@ -152,10 +172,10 @@ async def plaid_get_public_token(ins_details: Institution, client: httpx.AsyncCl
     } if custom_user else {}
 
     try:
-        resp = await client.post(f'{settings.test_plaid_url}/sandbox/public_token/create',
+        resp = await client.post(f'{settings.plaid_url}/sandbox/public_token/create',
                         headers={'Content-Type': 'application/json'},
                         json={
-                            'client_id': settings.test_plaid_client_id,
+                            'client_id': settings.plaid_client_id,
                             'secret': settings.plaid_secret,
                             'institution_id': institution_id,
                             'initial_products': products,
@@ -180,10 +200,10 @@ async def exchange_public_token(public_token: str, client: httpx.AsyncClient) ->
     access_token = None
     try:
         resp = await client.post(
-            f'{settings.test_plaid_url}/item/public_token/exchange',
+            f'{settings.plaid_url}/item/public_token/exchange',
             headers={'Content-Type': 'application/json'},
             json={
-                'client_id': settings.test_plaid_client_id,
+                'client_id': settings.plaid_client_id,
                 'secret': settings.plaid_secret,
                 'public_token': public_token
             }

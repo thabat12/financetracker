@@ -15,7 +15,8 @@ import string
 import secrets
 
 from db.models import *
-from api.config import settings, logger, yield_db
+from settings import settings
+from api.config import yield_db, logger
 from api.crypto.crypto import encrypt_data, decrypt_data, db_key_bytes
 from api.concurrency.db_lock import acquire_db_session_lock, release_db_session_lock, acquire_db_transaction_lock
 
@@ -32,8 +33,6 @@ GOOGLE_AUTH_USERINFO_URL = 'https://www.googleapis.com/oauth2/v1/userinfo'
 
 '''
     Models: all the useful models that the API uses to parse and return responses to the client
-
-
 '''
 class CreateAccountRequest(BaseModel):
     user_type: str
@@ -220,7 +219,7 @@ async def create_google_db_operation(user_info: GoogleAuthUserInfo, session: Asy
         this will retrieve the user id that is used for identification in the application.
 
 '''
-async def login_google_db_operation(user_info: GoogleAuthUserInfo, session: AsyncSession) -> CreateAccountReturn:
+async def login_google_db_operation(user_info: GoogleAuthUserInfo, session: AsyncSession, is_created: bool = False) -> CreateAccountReturn:
     logger.info('/auth/login_google_db_operation')
     result: LoginGoogleReturn = LoginGoogleReturn()
     google_user: GoogleUser = await session.get(GoogleUser, user_info.id)
@@ -237,7 +236,7 @@ async def login_google_db_operation(user_info: GoogleAuthUserInfo, session: Asyn
 
     await session.commit()
 
-    result.message = MessageEnum.LOGIN
+    result.message = MessageEnum.LOGIN if not is_created else MessageEnum.CREATED
     result.user_id = user_id
 
     return result

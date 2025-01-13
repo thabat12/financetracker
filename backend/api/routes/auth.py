@@ -33,13 +33,18 @@ auth_router = APIRouter()
 
 # CACHED SESSION
 async def session_dependency(session=Depends(yield_db)) -> AsyncSession:
-    logger.info("SESSION DEPENDENCY CREATED NEW SESSION")
+    logger.info("session_dependency")
     return session
 
 # LOAD: load google auth user info data
 async def load_google_login_response_dependency(
         request: LoginGoogleRequest, 
         client: httpx.AsyncClient = Depends(yield_client)) -> GoogleAuthUserInfo:
+    """
+        Given some JWT access token, validate that token and extract the associated user settings like
+        email, name, google id, etc.
+    """
+    logger.info("load_google_login_response_dependency")
     user_info = await load_google_login_response(request=request, client=client)
     return user_info
 
@@ -48,6 +53,18 @@ async def login_google_db_operation_dependency(
         request: Request,
         user_info: GoogleAuthUserInfo = Depends(load_google_login_response_dependency),
         session = Depends(session_dependency)) -> LoginGoogleReturn:
+    """
+        Both create_google and login_google will eventually call this dependency, which has two different options:
+            - create google:
+                - creates a new user in the database, given the parameters in the request
+                    - this will assign Google account information along with the user_key, user_id
+                - log in the user (this just sets the date of last login on the user in the database)
+                    - just ensures that you can read the user off of the database
+
+            - login google:
+                - ensure you can read the user off of the database and returns that user information
+    
+    """
     logger.info('auth/login_google_db_operation_dependency')
     path = request.url.path
     if path == '/auth/login_google':
@@ -55,7 +72,7 @@ async def login_google_db_operation_dependency(
     elif path == '/auth/create_google':
         logger.info('creating user')
         await create_google_db_operation(user_info=user_info, session=session)
-        result = await login_google_db_operation(user_info=user_info, session=session)
+        result = await login_google_db_operation(user_info=user_info, session=session, is_created=True)
     else:
         raise HTTPException(detail='invalid path provided!', status_code=500)
 
@@ -66,6 +83,11 @@ async def login_google_db_operation_dependency(
 async def create_auth_session_dependency(
         user_db: LoginGoogleReturn = Depends(login_google_db_operation_dependency),
         session: AsyncSession = Depends(session_dependency)) -> LoginGoogleResponse:
+    """
+        Given a specific user_id property, create a new authorization session (with the auth token) for
+        the current user. Note that this auth session has an expiry time, and is capped at 3 simultaneous
+        sessions per user.
+    """
     logger.info('/auth/create_auth_session_dependency')
     auth_token = await create_auth_session(user_id=user_db.user_id, session=session)
     logger.info(auth_token)
@@ -75,28 +97,20 @@ async def create_auth_session_dependency(
         account_status=user_db.message
     )
 
-# PROCESS: background task for registering an asynchronous dependency
-#           note that this will change in test environment to become synchronous
-#           because of pytest's limitations with their async test modules
-async def db_update_all_data_asynchronously_dependency(
-        background_tasks: BackgroundTasks,
-        session: AsyncSession = Depends(yield_db),
-        client: httpx.AsyncClient = Depends(yield_client),
-        google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)) -> None:
-    background_tasks.add_task(db_update_all_data_asynchronously, google_auth_user_info.user_id, session, client)
-
 # SEND: the endpoint is only bothered with returning results, and nothing else
 @auth_router.post('/login_google')
-async def login_google(
-    _: None = Depends(db_update_all_data_asynchronously_dependency),
-    google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)) -> LoginGoogleResponse:
+async def login_google(google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)) -> LoginGoogleResponse:
+    """
+        User already exists on the database, re-log in given that user id in the request.
+    """
     logger.info('auth/login_google')
     return google_auth_user_info
 
 @auth_router.post('/create_google')
-async def create_google(
-    google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)
-    ) -> LoginGoogleResponse:
+async def create_google(google_auth_user_info: LoginGoogleResponse = Depends(create_auth_session_dependency)) -> LoginGoogleResponse:
+    """
+        User does not exist on the database, so must create and then log in the user.
+    """
     logger.info('auth/create_google')
     logger.info(google_auth_user_info)
     return google_auth_user_info

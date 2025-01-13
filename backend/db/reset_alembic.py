@@ -1,3 +1,4 @@
+import os
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 import shutil
@@ -15,6 +16,24 @@ print('sqlalchemy_database_uri', settings.sqlalchemy_database_uri)
 
 
 if __name__ == '__main__':
+    # remove the files under the versions directory
+    versions_folder = './alembic/versions/'
+
+    assert os.path.isdir(versions_folder)
+    files = os.listdir(versions_folder)
+
+    for file_to_delete in files:
+        filepath = versions_folder + file_to_delete
+        
+        if file_to_delete == "__pycache__":
+            print("removing directory", filepath)
+            shutil.rmtree(filepath)
+        elif os.path.isfile(filepath):
+            print("removing file", filepath)
+            os.remove(filepath)
+        else:
+            raise Exception("unexpected file found in alembic/versions: " + filepath)
+
     # reset the alembic current version table
     db_engine = create_engine(settings.sqlalchemy_database_uri)
 

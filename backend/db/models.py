@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean, LargeBinary, Text
+from sqlalchemy import Column, DateTime, Float, Integer, String, ForeignKey, Boolean, LargeBinary, Text, BigInteger
 from sqlalchemy.orm import relationship, declarative_base
 
 from pydantic import BaseModel, Field
@@ -33,10 +33,9 @@ class User(Base):
     # one to many
     accounts = relationship('Account', backref='user', lazy='select', cascade='all, delete-orphan')
     transactions = relationship('Transaction', backref='user', lazy='select', cascade='all, delete-orphan')
-    subscriptions = relationship('Subscription', backref='user', lazy='select', cascade='all, delete-orphan')
     auth_sessions = relationship('AuthSession', backref='user', lazy='select', cascade='all, delete-orphan')
     access_keys = relationship('AccessKey', backref='user', lazy='select', cascade='all, delete-orphan')
-    investment_holdings = relationship('InvestmentHolding', backref='user', lazy='select', cascade='all, delete-orphan')
+    investment_holdings = relationship('Holding', backref='user', lazy='select', cascade='all, delete-orphan')
 
 class GoogleUser(Base):
     __tablename__ = 'google_user'
@@ -107,7 +106,6 @@ class Merchant(Base):
 
     # one to many
     transactions = relationship('Transaction', backref='merchant', lazy='select')
-    subscriptions = relationship('Subscription', backref='merchant', lazy='select')
 
 class Transaction(Base):
     __tablename__ = 'transaction'
@@ -133,55 +131,68 @@ class Transaction(Base):
     merchant_id = Column(String(Constants.IDSizes.MEDIUM), \
                             ForeignKey(f'{Merchant.__tablename__}.merchant_id'), nullable=True)
     
-    # TODO
     institution_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Institution.__tablename__}.institution_id'), nullable=True)
 
-class InvestmentHolding(Base):
-    __tablename__ = 'investment_holding'
+class Security(Base):
+    __tablename__ = "security"
 
-    investment_holding_id = Column(String(Constants.IDSizes.LARGE), primary_key=True)
-    name = Column(LargeBinary, nullable=True)
-    ticker = Column(LargeBinary, nullable=True)
+    security_id = Column(String(Constants.IDSizes.LARGE), primary_key=True)
+    institution_security_id = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+
+    name = Column(String(Constants.IDSizes.LARGE), nullable=True)
+    ticker_symbol = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+    is_cash_equivalent = Column(Boolean, nullable=True)
+    type = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+
+    close_price = Column(Float, nullable=True)
+    close_price_as_of = Column(DateTime, nullable=True)
+    update_datetime = Column(DateTime, nullable=True)
+    iso_currency_code = Column(String(10), nullable=True)
+    unofficial_currency_code = Column(String(10), nullable=True)
+    market_identifier_code = Column(String(10), nullable=True)
+    sector = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+    industry = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+
+    # if you have options, this is a field on its own
+    option_contract_type = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+    option_expiration_date = Column(DateTime, nullable=True)
+    option_strike_price = Column(Float, nullable=True)
+    option_underlying_ticker = Column(String(Constants.IDSizes.MEDIUM), nullable=True)
+
+    # if you have bonds
+    percentage = Column(Float, nullable=True)
+    maturity_date = Column(DateTime, nullable=True)
+    issue_date = Column(DateTime, nullable=True)
+    face_value = Column(Float, nullable=True)
+
+class Holding(Base):
+    __tablename__ = "holding"
+
+    # I am getting holding data if it matches user-key anyways
+    holding_id = Column(Integer, primary_key=True, autoincrement=True)
+    institution_price = Column(LargeBinary, nullable=False)
+    institution_price_as_of = Column(DateTime, nullable=True) # this is not super sensitive info
+    institution_value = Column(LargeBinary, nullable=False)
     cost_basis = Column(LargeBinary, nullable=True)
-    institution_price = Column(Float, nullable=True)
-    institution_price_as_of = Column(DateTime, nullable=True)
-    institution_value = Column(Float, nullable=True)
-    iso_currency_code = Column(String(Constants.IDSizes.SMALL), nullable=True)
-    quantity = Column(LargeBinary, nullable=True)
-    unofficial_currency_code = Column(String(Constants.IDSizes.SMALL), nullable=True)
+    quantity = Column(LargeBinary, nullable=False)
+    iso_currency_code = Column(String(Constants.IDSizes.MEDIUM), nullable=True) # not encrypted (bc why lol)
+    unofficial_currency_code = Column(LargeBinary, nullable=True)
     vested_quantity = Column(LargeBinary, nullable=True)
     vested_value = Column(LargeBinary, nullable=True)
-    
+
     # relationships
-    account_id = Column(String(Constants.IDSizes.MEDIUM), ForeignKey(f'{Account.__tablename__}.account_id'), nullable=True)
-    user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), nullable=True)
-
-class Subscription(Base):
-    __tablename__ = 'subscription'
-    subscription_id = Column(Integer, primary_key=True, nullable=False)
-    name = Column(String(Constants.IDSizes.MEDIUM), nullable=False)
-    price = Column(Float, nullable=False)
-    renewal_date = Column(DateTime, nullable=False)
-
-    # one (User) -> many (Subscription)
     user_id = Column(String(Constants.IDSizes.SMALL), ForeignKey(f'{User.__tablename__}.user_id'), \
-                        nullable=False)
-    
-    # one (Merchant) -> many (Subscription)
-    merchant_id = Column(String(Constants.IDSizes.SMALL), \
-                            ForeignKey(f'{Merchant.__tablename__}.merchant_id'), nullable=True)
+                     nullable=False)
 
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'name': self.name,
-            'price': self.price,
-            'renewal_date': self.renewal_date.isoformat()
-        }
-
-    def __repr__(self):
-        return f'<Subscription {self.name}>'
+    account_id = Column(String(Constants.IDSizes.MEDIUM), \
+                              ForeignKey(f'{Account.__tablename__}.account_id'), nullable=False)
     
+    security_id = Column(String(Constants.IDSizes.LARGE), \
+                         ForeignKey(f'{Security.__tablename__}.security_id'), nullable=False)
+    
+    institution_id = Column(String(Constants.IDSizes.MEDIUM), \
+                            ForeignKey(f'{Institution.__tablename__}.institution_id'), nullable=False)
+
 class PORM(BaseModel):
     class ConfigDict:
         from_attributes = True
@@ -227,5 +238,59 @@ class PTransaction(PORM):
     class ConfigDict:
         from_attributes = True
 
-class PSubscription(PORM):
-    subscription_id: int
+class PHolding(PORM):
+    holding_id: str
+    institution_price: float
+    institution_price_as_of: Optional[datetime] = None
+    institution_value: float
+    cost_basis: Optional[float] = None
+    quantity: float
+    iso_currency_code: Optional[str] = None
+    unofficial_currency_code: Optional[str] = None
+    vested_quantity: Optional[float] = None
+    vested_value: Optional[float] = None
+    account_id: str
+    security_id: str
+    institution_id: str
+
+    class ConfigDict:
+        from_attributes = True
+
+class PSecurity(PORM):
+    security_id: str
+    institution_security_id: Optional[str] = None
+
+    name: str
+    ticker_symbol: Optional[str] = None
+    is_cash_equivalent: Optional[bool] = None
+    type: Optional[str] = None
+
+    close_price: Optional[float] = None
+    close_price_as_of: Optional[float] = None
+    update_datetime: Optional[datetime] = None
+    iso_currency_code: Optional[str] = None
+    unofficial_currency_code: Optional[str] = None
+    market_identifier_code: Optional[str] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+
+    # Option fields
+    option_contract_type: Optional[str] = None
+    option_expiration_date: Optional[str] = None
+    option_strike_price: Optional[float] = None
+    option_underlying_ticker: Optional[str] = None
+
+    # Bond fields
+    percentage: Optional[float] = None
+    maturity_date: Optional[str] = None
+    issue_date: Optional[str] = None
+    face_value: Optional[float] = None
+
+    # Relationships
+    user_id: str
+    account_id: str
+    institution_id: str
+
+    class ConfigDict:
+        from_attributes = True
+

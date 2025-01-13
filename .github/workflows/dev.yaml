@@ -1,0 +1,30 @@
+on:
+  push:
+    branches:
+      - main
+      - dockerize_everything
+
+jobs:
+  unittests:
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+      - name: Setup Python Environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+      - name: Install Python Dependencies
+        run: |
+          pwd
+          ls -la
+          cd backend
+          make download_dependencies
+      - name: Setup AWS Account
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-2
