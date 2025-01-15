@@ -43,3 +43,15 @@ docker_build_dev:
 
 docker_up_dev:
 	@docker-compose -f .\docker\dev\docker-compose.yml --env-file ./envs/dev.env --project-directory . up
+
+docker_build_db:
+	@docker build -t test_db -f ./docker/dev/Dockerfile.pg .
+
+docker_run_db:
+	@docker run --name postgres-run \
+    --mount type=bind,source=db/pg_config/pg_hba.conf,dst=/var/lib/postgresql/data/pg_hba.conf \
+    --mount type=bind,source="/db/pg_config/postgresql.conf,dst=/var/lib/postgresql/data/postgresql.conf \
+    -e POSTGRES_DB=postgres \
+    -e POSTGRES_USER=postgres \
+    -e POSTGRES_PASSWORD=postgres \
+    -p 5433:5432 test_db 

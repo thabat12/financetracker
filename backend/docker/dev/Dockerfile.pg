@@ -1,8 +1,8 @@
 # working directory: ./financetracker/backend
-FROM postgres:latest
+FROM postgres:16.0
 
 # override the configuration file for max connections, etc.
-COPY ./db/pg_config/postgresql.conf /var/lib/postgresql/data/postgresql.conf
-COPY ./db/pg_config/pg_hba.conf /var/lib/postgresql/data/pg_hba.conf
+COPY ./db/pg_config/postgresql.conf /etc/postgresql.conf
+COPY ./db/pg_config/pg_hba.conf /etc/pg_hba.conf
 
 EXPOSE 5432

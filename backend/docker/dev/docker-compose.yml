@@ -9,8 +9,6 @@ services:
     hostname: ${POSTGRES_HOSTNAME}
     networks:
       - ${DOCKER_NETWORK}
-    ports:
-      - "5432:5432"
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -31,8 +29,6 @@ services:
       - setup-db
     networks:
       - ${DOCKER_NETWORK}
-    ports:
-      - "${API_PORT}:${API_PORT}"
     command: ["make", "run_test_api", "ENV=./envs/dev.env"]
     volumes:
       - ./api:/app/api
@@ -47,22 +43,20 @@ services:
       - api
     networks:
       - ${DOCKER_NETWORK} # client is part of the api network for now
-    ports:
-      - "3000:3000"
     command: ["make", "test_api", "ENV=./envs/dev.env"]
   # PSQL client service for troubleshooting
-  # psql-client:
-  #   image: postgres:latest
-  #   container_name: psql-client
-  #   networks:
-  #     - financetracker-network
-  #   depends_on:
-  #     - db
-  #   environment:
-  #     POSTGRES_USER: ${POSTGRES_USER}
-  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-  #     POSTGRES_DB: ${POSTGRES_DB}
-  #   entrypoint: ["tail", "-f", "/dev/null"]  # Keeps container running, waits for manual interaction
+  psql-client:
+    image: postgres:latest
+    container_name: psql-client
+    networks:
+      - financetracker-network
+    depends_on:
+      - db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    entrypoint: ["tail", "-f", "/dev/null"]  # Keeps container running, waits for manual interaction
 networks:
   financetracker-network:
     name: ${DOCKER_NETWORK}
