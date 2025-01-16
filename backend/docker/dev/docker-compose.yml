@@ -13,6 +13,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command: ["postgres", "-c", "config_file=/etc/postgresql.conf", "-c", "hba_file=/etc/pg_hba.conf"]
   setup-db:
     container_name: setup-db
     build:
@@ -20,6 +21,8 @@ services:
     networks:
       - ${DOCKER_NETWORK}
     command: ["make", "setup_db", "ENV=./envs/dev.env"]
+    depends_on:
+      - db
   api:
     container_name: api
     hostname: ${API_HOSTNAME}

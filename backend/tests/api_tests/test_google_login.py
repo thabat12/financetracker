@@ -33,7 +33,7 @@ def create_mock_google_user_endpoint() -> CreateGoogleResponse:
     Synchronous testing of the google login API
 """
 def test_api_root():
-    resp = requests.get(f"{TEST_API_URL}", json={})
+    resp = requests.get(f"{TEST_API_URL}", json={}, timeout=10)
 
     assert resp.status_code == 200
 
