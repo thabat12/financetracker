@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "financetracker-app",
-    "slug": "financetracker-app",
+    "name": "app",
+    "slug": "financetracker",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -15,7 +15,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.abhinavbichal.financetracker"
     },
     "web": {
       "bundler": "metro",
@@ -42,8 +43,9 @@
         "origin": false
       },
       "eas": {
-        "projectId": "c432e72a-5411-46dc-8881-653bbc22d93a"
+        "projectId": "70063d18-02f5-4009-990d-62862fa6cf90"
       }
-    }
+    },
+    "owner": "abhinavbichal"
   }
 }
