@@ -5,5 +5,3 @@
 .*
 !.gitignore
 !.github
-
-app/android/*
