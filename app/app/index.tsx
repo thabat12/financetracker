@@ -5,52 +5,57 @@ import { StatusBar } from "expo-status-bar";
 
 import Data from "../mock_data/accounts.json";
 
-
-const getPath = ({x, y, dims} : {x?: number[] | String[], y: number[], dims: Dimension}) => {
+const getPathCoords = ({x, y, dims} : {x?: number[] | String[], y: number[], dims: Dimension}) => {
   // default safe areas
   const [safeT, safeB] = [10, 10];
   
   // get range for data stream
-  let [minY, maxY] = [Infinity, -Infinity];
-  for (let num of y) {
-    if (num < minY) { minY = num; }
-    if (num > maxY) { maxY = num; }
-  }
-  const range = maxY - minY;
-
-  // convert each number into a scale
-  let yScaled = y.map((val) => {
-    return (val - minY) / range;
-  });
-
-  // new y-coord system
+  let minY = Math.min(...y);
+  const range = Math.max(...y) - minY;
   const newRange = dims.height - safeT - safeB;
-  yScaled = yScaled.map((val) => {
-    return val * newRange;
-  });
-
-  // section up x accordingly
-  if (x === undefined) {
-    x = yScaled.map(() => { return ""; })
-  }
-
-  // how many ticks?
-  const numTicks = x.length;
-  const tickGap = dims.width / (numTicks - 1);
+  let yScaled = y.map((val) => { return ((val - minY) / range) * newRange; });
+  x = (x === undefined) ? yScaled.map( () => { return ""; }) : x;
+  const tickGap = dims.width / (x.length - 1);
 
   // time to construct the path
-  let path = Skia.Path.Make();
-  path.moveTo(0, dims.height - safeT - yScaled[0]);
+  let points: Vector2D[] = [{ x: 0, y: dims.height - safeT - yScaled[0] }];
 
   for (let ind = 1; ind < Math.min(x.length, yScaled.length); ind++) {
-    let xCoord: number = ind;
-    if (typeof x[ind] === "number") {
-      xCoord = x[ind] as number;
+    if (yScaled[ind] !== undefined) {
+      const xCoord = (x[ind] === "number" ? x[ind] as number : ind) * tickGap;
+      points.push({x: xCoord, y: dims.height - safeT - yScaled[ind]});
     }
-    path.lineTo(xCoord * tickGap, dims.height - safeT - yScaled[ind]);
+  }
+
+  console.log(points);
+
+  return points;
+}
+
+const curvePath = ({points, strategy}: {points: Vector2D[], strategy: String}) => {
+  const path = Skia.Path.Make();
+
+  switch (strategy) {
+    case "bezier":
+      path.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        const prev = points[i - 1];
+        const next = points[i];
+        const cp1x = (next.x - prev.x) / 3 + prev.x;
+        const cp1y =  (next.y - prev.y) / 3 + prev.y;
+        const cp2x = (next.x - prev.x) / 3 * 2 + prev.x;
+        const cp2y = (next.y - prev.y) / 3 * 2 + prev.y;
+        path.cubicTo(cp1x, cp1y, cp2x, cp2y, next.x, next.y);
+      }
+      break;
   }
 
   return path;
+}
+
+type Vector2D = {
+  x: number,
+  y: number
 }
 
 type Dimension = {
@@ -66,9 +71,10 @@ const LineGraph = ({x, y, dims} : {x?: number[] | String[], y: number[], dims: D
   const canvasDims: Dimension = {width, height} as Dimension;
 
   // Height needs to be normalized to the dimensions on screen
-  const path: SkPath = getPath({x, y, dims: canvasDims});
+  const points: Vector2D[] = getPathCoords({x, y, dims: canvasDims});
+  const strategy = "bezier";
+  const path: SkPath = curvePath({points, strategy});
 
-  console.log("path is being added now", path);
   return (
     <Canvas style={{ width, height }}>
       {/* <Rect x={0} y={0} width={width} height={height} color="gray" /> */}
